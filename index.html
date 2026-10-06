@@ -223,11 +223,11 @@ const TYPES = {
   rock: ["Roca", "#afa981"], ghost: ["Fantasma", "#704170"], dragon: ["Dragón", "#5060e1"],
   dark: ["Siniestro", "#624d4e"], steel: ["Acero", "#60a1b8"], fairy: ["Hada", "#ef70ef"],
 };
-const START_LIVES = 3;
+const START_LIVES = 1;     // un fallo y se acaba
 const HITS_PER_LEVEL = 5;  // aciertos necesarios para subir de nivel
 
 // Dificultad por nivel
-const roundTime   = lvl => Math.max(4, 15 - (lvl - 1) * 1.5);          // 15s, 13.5s, 12s… mínimo 4s
+const roundTime   = lvl => Math.max(2, 10 * 0.82 ** (lvl - 1));     // 10s, 8.2s, 6.7s, 5.5s… mínimo 2s
 const optionCount = lvl => lvl >= 6 ? 8 : lvl >= 3 ? 6 : 4;            // más opciones
 const sameType    = lvl => lvl >= 4;                                   // opciones del mismo tipo
 const mirrored    = lvl => lvl >= 5;                                   // silueta en espejo
@@ -348,7 +348,7 @@ function showMenu() {
   $screen.innerHTML = `
     <div class="menu">
       <h2>Adivina el Pokémon por su silueta</h2>
-      <p>Tienes ${START_LIVES} vidas. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
+      <p>Un fallo y se acaba la partida. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
       <label class="field" for="playerName">Nombre de entrenador
         <input id="playerName" maxlength="12" autocomplete="off" value="${esc(store.get("wtp-name", ""))}" placeholder="ASH">
       </label>
@@ -375,7 +375,7 @@ function showMenu() {
 }
 
 function newState() {
-  return { score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, recent: new Set() };
+  return { score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, times: [], recent: new Set() };
 }
 
 async function startGame() {
@@ -394,7 +394,7 @@ function hud() {
     <span class="lvl">NIV ${state.level}</span>
     <span>PTS ${String(state.score).padStart(6, "0")}</span>
     <span>x${state.streak}</span>
-    <span class="lives">${"♥".repeat(state.lives)}${"♡".repeat(START_LIVES - state.lives)}</span>
+    <span>MEDIA ${avgTime(state.times)}</span>
   </div>`;
 }
 
@@ -440,6 +440,7 @@ async function playRound() {
 function startTimer(total) {
   const bar = document.getElementById("bar");
   const t0 = performance.now();
+  state.t0 = t0; state.roundTotal = total;
   const tick = () => {
     const left = Math.max(0, total - (performance.now() - t0) / 1000);
     state.timeLeft = left;
@@ -457,12 +458,16 @@ function answer(id) {
   stopTimer();
   const ans = state.current.answer;
   const ok = id === ans.id;
+  // tiempo de respuesta de esta ronda (si se agota, cuenta el tiempo completo)
+  const elapsed = Math.min(state.roundTotal, (performance.now() - state.t0) / 1000);
+  state.times.push(elapsed);
 
   let gained = 0, levelUp = false;
   if (ok) {
     state.streak++;
     state.bestStreak = Math.max(state.bestStreak, state.streak);
-    gained = Math.round((100 + state.timeLeft * 10) * Math.min(1 + (state.streak - 1) * 0.5, 4) * state.level);
+    const speed = 1 - elapsed / state.roundTotal;  // 1 = instantáneo, 0 = al límite
+    gained = Math.round((100 + speed * 150) * Math.min(1 + (state.streak - 1) * 0.5, 4) * state.level);
     state.score += gained;
     state.hits++;
     const lvl = levelOf(state.hits);
@@ -519,12 +524,19 @@ function gensLabel(gens) {
   return gens.length === GENS.length ? "Todas" : gens.join(",");
 }
 
+function avgOf(times) {
+  return times.length ? times.reduce((s, t) => s + t, 0) / times.length : null;
+}
+function fmtSec(s) { return s == null ? "—" : s.toFixed(2) + "s"; }
+function avgTime(times) { return fmtSec(avgOf(times)); }
+
 // guarda el intento actual en el scoreboard (también si se abandona desde el menú)
 function saveAttempt() {
   const attempt = {
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
     name: playerName, score: state.score, level: state.level, hits: state.hits,
-    rounds: state.round, bestStreak: state.bestStreak, gens: [...selectedGens], date: new Date().toISOString(),
+    rounds: state.round, bestStreak: state.bestStreak, avgTime: avgOf(state.times),
+    gens: [...selectedGens], date: new Date().toISOString(),
   };
   const board = store.get("wtp-board", []);
   board.push(attempt);
@@ -546,7 +558,8 @@ function gameOver() {
       <h2>FIN DEL JUEGO</h2>
       <div class="score">${state.score}</div>
       <p>${record ? "¡Nuevo récord!" : `Récord: ${best}`}</p>
-      <p>${esc(playerName)} · Nivel ${state.level} · ${state.hits}/${state.round} aciertos · mejor racha ${state.bestStreak}</p>
+      <p>${esc(playerName)} · Nivel ${state.level} · ${state.hits} aciertos</p>
+      <p>Tiempo medio por respuesta: <b>${avgTime(state.times)}</b></p>
       <p>Puesto <b>#${rank}</b> de ${board.length} intentos.</p>
     </div>`;
   state = null;
@@ -579,11 +592,11 @@ function showBoard(tab = "top", highlight = null, confirmClear = false) {
       </div>
       ${rows.length ? `
       <div class="board"><table>
-        <thead><tr><th>#</th><th>NOMBRE</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th>GEN</th><th>FECHA</th></tr></thead>
+        <thead><tr><th>#</th><th>NOMBRE</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th>GEN</th><th>FECHA</th></tr></thead>
         <tbody>${rows.map((a, i) => `
           <tr class="${a.id === highlight ? "me" : ""}">
             <td>${i + 1}</td><td>${esc(a.name)}</td><td class="r">${a.score}</td><td class="r">${a.level}</td>
-            <td class="r">${a.hits}/${a.rounds}</td><td>${esc(gensLabel(a.gens))}</td><td>${fmtDate(a.date)}</td>
+            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avgTime)}</td><td>${esc(gensLabel(a.gens))}</td><td>${fmtDate(a.date)}</td>
           </tr>`).join("")}</tbody>
       </table></div>` : `<p class="empty">Todavía no hay intentos. Juega una partida y aparecerá aquí.</p>`}
       <p>${board.length} intentos guardados en este navegador.</p>
