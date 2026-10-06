@@ -23,22 +23,33 @@ create table if not exists public.sessions (
   expires_at timestamptz not null default now() + interval '30 days'
 );
 
--- Resultados de cada partida
+-- Resultados de cada partida (cada modo de juego tiene su propio ranking)
 create table if not exists public.scores (
   id         bigint generated always as identity primary key,
   player_id  bigint not null references public.players(id) on delete cascade,
+  mode       text not null default 'silueta',
   score      integer not null check (score >= 0),
   level      integer not null check (level >= 1),
   hits       integer not null check (hits >= 0),
   avg_time   real check (avg_time is null or avg_time >= 0),
   gens       smallint[] not null default '{}',
-  created_at timestamptz not null default now(),
-  -- coherencia con las reglas del juego (5 aciertos por nivel, máximo 1000 puntos por acierto y nivel)
-  constraint scores_level_matches_hits check (level = 1 + hits / 5),
-  constraint scores_score_possible check (score <= 1000 * hits * level)
+  created_at timestamptz not null default now()
 );
+-- para bases de datos creadas antes de que existieran los modos
+alter table public.scores add column if not exists mode text not null default 'silueta';
+
+-- Reglas de cada modo (se recrean para que el script se pueda ejecutar varias veces)
+alter table public.scores drop constraint if exists scores_mode_format;
+alter table public.scores drop constraint if exists scores_level_matches_hits;
+alter table public.scores drop constraint if exists scores_score_possible;
+alter table public.scores add constraint scores_mode_format check (mode ~ '^[a-z0-9_]{1,32}$');
+-- modo "silueta": 5 aciertos por nivel, máximo 1000 puntos por acierto y nivel
+alter table public.scores add constraint scores_level_matches_hits check (mode <> 'silueta' or level = 1 + hits / 5);
+alter table public.scores add constraint scores_score_possible check (mode <> 'silueta' or score <= 1000 * hits * level);
+
 create index if not exists scores_player_score_idx on public.scores (player_id, score desc);
-create index if not exists scores_score_idx on public.scores (score desc);
+create index if not exists scores_mode_score_idx on public.scores (mode, score desc);
+drop index if exists public.scores_score_idx;
 
 alter table public.players  enable row level security;
 alter table public.sessions enable row level security;
@@ -121,9 +132,15 @@ as $$
 $$;
 
 
--- Guarda una partida y devuelve la mejor puntuación del jugador y su puesto en el ranking
+-- Versiones antiguas (sin modos de juego)
+drop function if exists public.submit_score(uuid, integer, integer, integer, real, smallint[]);
+drop function if exists public.leaderboard(integer);
+drop function if exists public.my_scores(uuid, integer);
+
+
+-- Guarda una partida y devuelve la mejor puntuación del jugador y su puesto en el ranking de ese modo
 create or replace function public.submit_score(
-  p_token uuid, p_score integer, p_level integer, p_hits integer, p_avg_time real, p_gens smallint[]
+  p_token uuid, p_mode text, p_score integer, p_level integer, p_hits integer, p_avg_time real, p_gens smallint[]
 )
 returns json
 language plpgsql security definer set search_path = public
@@ -136,29 +153,30 @@ begin
   if v_id is null then
     raise exception 'Tu sesión ha caducado. Vuelve a entrar.';
   end if;
-  insert into scores (player_id, score, level, hits, avg_time, gens)
-  values (v_id, p_score, p_level, p_hits, p_avg_time, coalesce(p_gens, '{}'));
+  insert into scores (player_id, mode, score, level, hits, avg_time, gens)
+  values (v_id, p_mode, p_score, p_level, p_hits, p_avg_time, coalesce(p_gens, '{}'));
 
-  select max(score) into v_best from scores where player_id = v_id;
+  select max(score) into v_best from scores where player_id = v_id and mode = p_mode;
   select 1 + count(*) into v_rank
-  from (select player_id, max(score) as best from scores group by player_id) b
+  from (select player_id, max(score) as best from scores where mode = p_mode group by player_id) b
   where b.best > v_best;
   return json_build_object('best', v_best, 'rank', v_rank);
 end
 $$;
 
 
--- Ranking: la mejor partida de cada jugador
-create or replace function public.leaderboard(p_limit integer default 10)
+-- Ranking de un modo: la mejor partida de cada jugador
+create or replace function public.leaderboard(p_mode text, p_limit integer default 10)
 returns table (username text, best_score integer, level integer, hits integer, avg_time real, games bigint, achieved_at timestamptz)
 language sql stable security definer set search_path = public
 as $$
   with best as (
     select distinct on (s.player_id) s.player_id, s.score, s.level, s.hits, s.avg_time, s.created_at
     from scores s
+    where s.mode = p_mode
     order by s.player_id, s.score desc, s.created_at asc
   ), games as (
-    select player_id, count(*) as n from scores group by player_id
+    select player_id, count(*) as n from scores where mode = p_mode group by player_id
   )
   select p.username, b.score, b.level, b.hits, b.avg_time, g.n, b.created_at
   from best b
@@ -169,14 +187,15 @@ as $$
 $$;
 
 
--- Últimas partidas del jugador con sesión
-create or replace function public.my_scores(p_token uuid, p_limit integer default 50)
-returns table (score integer, level integer, hits integer, avg_time real, gens smallint[], created_at timestamptz)
+-- Últimas partidas del jugador con sesión (de un modo, o de todos si p_mode es null)
+create or replace function public.my_scores(p_token uuid, p_mode text default null, p_limit integer default 50)
+returns table (mode text, score integer, level integer, hits integer, avg_time real, gens smallint[], created_at timestamptz)
 language sql stable security definer set search_path = public
 as $$
-  select s.score, s.level, s.hits, s.avg_time, s.gens, s.created_at
+  select s.mode, s.score, s.level, s.hits, s.avg_time, s.gens, s.created_at
   from scores s
   where s.player_id = _player_from_token(p_token)
+    and (p_mode is null or s.mode = p_mode)
   order by s.created_at desc
   limit least(greatest(coalesce(p_limit, 50), 1), 200)
 $$;
@@ -187,7 +206,7 @@ grant execute on function
   public.login(text, text),
   public.whoami(uuid),
   public.logout(uuid),
-  public.submit_score(uuid, integer, integer, integer, real, smallint[]),
-  public.leaderboard(integer),
-  public.my_scores(uuid, integer)
+  public.submit_score(uuid, text, integer, integer, integer, real, smallint[]),
+  public.leaderboard(text, integer),
+  public.my_scores(uuid, text, integer)
 to anon, authenticated;

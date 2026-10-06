@@ -103,7 +103,7 @@
   .board td.r { text-align: right; }
   .board th.r { text-align: right; }
   .board tr.me td { background: #c4d6b0; font-weight: 800; }
-  .tabs { display: flex; gap: 8px; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
   .tabs .small[aria-pressed="true"] { background: var(--gold); color: var(--ink); }
   .empty { padding: 20px 0; text-align: center; }
   .loading { font-family: var(--font-display); font-size: 10px; }
@@ -205,6 +205,23 @@
   .field input.plain { text-transform: none; }
   .link { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; font-weight: 800; padding: 0; align-self: flex-start; }
   .ok-msg { color: var(--ok); font-weight: 800; }
+  .modes { display: flex; flex-direction: column; gap: 10px; }
+  .mode-card {
+    display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+    background: var(--screen-ink); color: var(--screen); border: none; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 4px 0 #0b120a; font: inherit; transition: transform .08s, box-shadow .08s;
+  }
+  .mode-card:hover { transform: translateY(-2px); box-shadow: 0 6px 0 #0b120a; }
+  .mode-card:active { transform: translateY(3px); box-shadow: 0 1px 0 #0b120a; }
+  .mode-name { font-family: var(--font-display); font-size: 11px; line-height: 1.5; }
+  .mode-desc { font-size: 14px; line-height: 1.4; opacity: .85; }
+  .mode-soon { font-size: 13px; opacity: .7; }
+  .side-mode { display: flex; flex-direction: column; gap: 8px; }
+  .side-mode select {
+    font-family: var(--font-body); font-weight: 800; font-size: 14px; padding: 8px 10px; border-radius: 8px;
+    border: 2px solid var(--ink); background: #fff; color: var(--ink); cursor: pointer;
+  }
+  .side-mode select:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
   @media (max-width: 420px) { .opt { font-size: 14px; padding: 12px 8px; } .dex { padding: 14px; } }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -233,6 +250,9 @@
 </main>
 
 <aside class="side" aria-label="Ranking">
+  <label class="side-mode" for="sideMode"><h3>RANKING DEL MODO</h3>
+    <select id="sideMode"></select>
+  </label>
   <h3>MEJOR ENTRENADOR</h3>
   <div class="champ" id="champ"><div class="meta">Cargando ranking…</div></div>
   <h3>TOP 10</h3>
@@ -274,6 +294,17 @@ const mirrored    = lvl => lvl >= 5;                                   // siluet
 const zoomed      = lvl => lvl >= 7;                                   // silueta recortada
 const levelOf     = hits => 1 + Math.floor(hits / HITS_PER_LEVEL);
 
+// Modos de juego. Cada modo tiene su propio ranking en la base de datos (columna scores.mode = clave).
+// Para añadir uno: nueva entrada aquí con su pantalla de inicio (setup).
+const MODES = {
+  silueta: {
+    name: "¿Quién es ese Pokémon?",
+    short: "Silueta",
+    desc: "Adivina el Pokémon por su silueta. Un fallo y se acaba; cada nivel, menos tiempo.",
+    setup: () => showSiluetaSetup(),
+  },
+};
+
 const $screen = document.getElementById("screen");
 const $controls = document.getElementById("controls");
 const $lens = document.getElementById("lens");
@@ -290,6 +321,9 @@ let sound = store.get("wtp-sound", true);
 let selectedGens = store.get("wtp-gens", [1]);
 let session = store.get("wtp-session", null);   // { token, username } o null
 let guest = false;                               // jugando sin cuenta: no se guarda nada
+let currentMode = store.get("wtp-mode", "silueta");
+if (!MODES[currentMode]) currentMode = "silueta";
+let sideMode = currentMode;                      // modo que muestra el panel lateral
 let timerId = null;
 let nextRound = null;      // ronda precargada
 
@@ -340,7 +374,20 @@ async function checkSession() {
   } catch {}
 }
 
-/* ---------- Panel lateral: campeón y top 10 ---------- */
+/* ---------- Panel lateral: campeón y top 10 del modo elegido ---------- */
+const $sideMode = document.getElementById("sideMode");
+$sideMode.innerHTML = Object.entries(MODES).map(([id, m]) => `<option value="${id}">${esc(m.short)}</option>`).join("");
+$sideMode.value = sideMode;
+$sideMode.onchange = () => setSideMode($sideMode.value);
+
+function setSideMode(mode) {
+  if (sideMode === mode) return;
+  sideMode = mode;
+  $sideMode.value = mode;
+  refreshSide();
+}
+
+let sideReq = 0;
 async function refreshSide() {
   const $champ = document.getElementById("champ");
   const $top = document.getElementById("top10");
@@ -349,8 +396,10 @@ async function refreshSide() {
     $champ.innerHTML = `<div class="meta">Ranking no disponible: falta configurar la base de datos.</div>`;
     return;
   }
+  const req = ++sideReq;
   try {
-    const rows = await rpc("leaderboard", { p_limit: 10 });
+    const rows = await rpc("leaderboard", { p_mode: sideMode, p_limit: 10 });
+    if (req !== sideReq) return;  // llegó tarde: ya se pidió otro modo
     if (!rows.length) {
       $champ.innerHTML = `<div class="crown">CAMPEÓN</div><div class="meta">Nadie ha jugado todavía. ¡El primer puesto es tuyo!</div>`;
       $top.innerHTML = "";
@@ -508,16 +557,47 @@ async function logout() {
   if (t) rpc("logout", { p_token: t }).catch(() => {});
 }
 
+// Menú principal: elegir modo de juego
 function showMenu() {
+  stopTimer();
   state = null;
   if (!session && !guest) return showLogin();
   $screen.innerHTML = `
     <div class="menu">
-      <h2>Adivina el Pokémon por su silueta</h2>
-      <p>Un fallo y se acaba la partida. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
       <p>${session
         ? `Jugando como <b>${esc(session.username)}</b>. <button class="link" type="button" id="logoutBtn">Salir</button>`
         : `Jugando sin cuenta: tus partidas no se guardan. <button class="link" type="button" id="toLogin">Entrar</button>`}</p>
+      <h2>Elige modo de juego</h2>
+      <div class="modes">
+        ${Object.entries(MODES).map(([id, m]) => `
+          <button class="mode-card" type="button" data-mode="${id}">
+            <span class="mode-name">${esc(m.name)}</span>
+            <span class="mode-desc">${esc(m.desc)}</span>
+          </button>`).join("")}
+      </div>
+      <p class="mode-soon">Pronto habrá más modos.</p>
+    </div>`;
+  const $lo = document.getElementById("logoutBtn");
+  if ($lo) $lo.onclick = logout;
+  const $tl = document.getElementById("toLogin");
+  if ($tl) $tl.onclick = () => { guest = false; showLogin(); };
+  $screen.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
+    currentMode = b.dataset.mode;
+    store.set("wtp-mode", currentMode);
+    setSideMode(currentMode);
+    MODES[currentMode].setup();
+  });
+  $controls.innerHTML = `<button class="big" type="button" id="boardBtn" style="grid-column:1/-1">SCOREBOARD</button>`;
+  document.getElementById("boardBtn").onclick = () => showBoard("top", currentMode);
+}
+
+/* ---------- Modo "silueta" ---------- */
+function showSiluetaSetup() {
+  state = null;
+  $screen.innerHTML = `
+    <div class="menu">
+      <h2>${esc(MODES.silueta.name)}</h2>
+      <p>Un fallo y se acaba la partida. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
       <div class="gens" id="gens">
         ${GENS.map(g => `
           <label><input type="checkbox" id="gen${g.n}" value="${g.n}" ${selectedGens.includes(g.n) ? "checked" : ""}>
@@ -529,22 +609,18 @@ function showMenu() {
       </div>
       <div class="err" id="err"></div>
     </div>`;
-  const $lo = document.getElementById("logoutBtn");
-  if ($lo) $lo.onclick = logout;
-  const $tl = document.getElementById("toLogin");
-  if ($tl) $tl.onclick = () => { guest = false; showLogin(); };
   const setAll = v => { document.querySelectorAll("#gens input").forEach((c, i) => c.checked = v === "all" || i === 0); };
   document.getElementById("allBtn").onclick = () => setAll("all");
   document.getElementById("noneBtn").onclick = () => setAll("kanto");
   $controls.innerHTML = `
     <button class="big" type="button" id="startBtn">¡JUGAR!</button>
-    <button class="big" type="button" id="boardBtn">SCOREBOARD</button>`;
+    <button class="big" type="button" id="backBtn">VOLVER</button>`;
   document.getElementById("startBtn").onclick = startGame;
-  document.getElementById("boardBtn").onclick = () => showBoard();
+  document.getElementById("backBtn").onclick = showMenu;
 }
 
 function newState() {
-  return { score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, times: [], recent: new Set() };
+  return { mode: "silueta", score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, times: [], recent: new Set() };
 }
 
 async function startGame() {
@@ -701,10 +777,10 @@ function avgTime(times) { return fmtSec(avgOf(times)); }
 function saveAttempt(g = state) {
   if (!session || !dbReady || !g) return Promise.resolve(null);
   const p = rpc("submit_score", {
-    p_token: session.token, p_score: g.score, p_level: g.level, p_hits: g.hits,
+    p_token: session.token, p_mode: g.mode, p_score: g.score, p_level: g.level, p_hits: g.hits,
     p_avg_time: avgOf(g.times), p_gens: [...selectedGens],
   });
-  p.then(refreshSide, e => { if (/sesión/i.test(e.message)) setSession(null); });
+  p.then(() => { sideMode === g.mode ? refreshSide() : setSideMode(g.mode); }, e => { if (/sesión/i.test(e.message)) setSession(null); });
   return p;
 }
 
@@ -713,7 +789,7 @@ function gameOver() {
   state = null;
   $screen.innerHTML = `
     <div class="menu over">
-      <h2>FIN DEL JUEGO</h2>
+      <h2>FIN DEL JUEGO · ${esc(MODES[g.mode].short.toUpperCase())}</h2>
       <div class="score">${g.score}</div>
       <p>${session ? esc(session.username) + " · " : ""}Nivel ${g.level} · ${g.hits} aciertos</p>
       <p>Tiempo medio por respuesta: <b>${avgTime(g.times)}</b></p>
@@ -723,11 +799,11 @@ function gameOver() {
     <button class="big" type="button" id="again">OTRA VEZ</button>
     <button class="big" type="button" id="toBoard">SCOREBOARD</button>`;
   document.getElementById("again").onclick = () => { state = newState(); nextRound = null; playRound(); };
-  document.getElementById("toBoard").onclick = () => showBoard("top");
+  document.getElementById("toBoard").onclick = () => showBoard("top", g.mode);
 
   saveAttempt(g).then(res => {
     const $m = document.getElementById("saveMsg");
-    if ($m && res) $m.innerHTML = `<span class="ok-msg">Partida guardada.</span> Tu mejor puntuación: <b>${res.best}</b> · puesto <b>#${res.rank}</b> del ranking.`;
+    if ($m && res) $m.innerHTML = `<span class="ok-msg">Partida guardada.</span> Tu mejor puntuación: <b>${res.best}</b> · puesto <b>#${res.rank}</b> del ranking de este modo.`;
   }, e => {
     const $m = document.getElementById("saveMsg");
     if ($m) $m.innerHTML = `<span class="err">No se pudo guardar: ${esc(e.message)}</span>`;
@@ -741,27 +817,33 @@ function fmtDate(iso) {
 }
 
 let boardReq = 0;  // evita pintar una respuesta antigua si se cambia de pestaña rápido
-async function showBoard(tab = "top") {
+async function showBoard(tab = "top", mode = currentMode) {
   stopTimer();
   state = null;
+  if (!MODES[mode]) mode = "silueta";
   const req = ++boardReq;
   $screen.innerHTML = `
     <div class="menu">
       <h2>SCOREBOARD</h2>
+      <div class="tabs" aria-label="Modo de juego">
+        ${Object.entries(MODES).map(([id, m]) =>
+          `<button class="small" type="button" data-bmode="${id}" aria-pressed="${id === mode}">${esc(m.short.toUpperCase())}</button>`).join("")}
+      </div>
       <div class="tabs">
         <button class="small" type="button" data-tab="top" aria-pressed="${tab === "top"}">RANKING</button>
         ${session ? `<button class="small" type="button" data-tab="mine" aria-pressed="${tab === "mine"}">MIS PARTIDAS</button>` : ""}
       </div>
       <div id="boardBody" class="loading">CARGANDO…</div>
     </div>`;
-  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab));
+  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab, mode));
+  $screen.querySelectorAll("[data-bmode]").forEach(b => b.onclick = () => showBoard(tab, b.dataset.bmode));
   $controls.innerHTML = `<button class="big" type="button" id="toMenu" style="grid-column:1/-1">MENÚ</button>`;
   document.getElementById("toMenu").onclick = showMenu;
 
   let html;
   try {
     if (tab === "mine" && session) {
-      const rows = await rpc("my_scores", { p_token: session.token, p_limit: 50 });
+      const rows = await rpc("my_scores", { p_token: session.token, p_mode: mode, p_limit: 50 });
       html = rows.length ? `
         <div class="board"><table>
           <thead><tr><th>FECHA</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th>GEN</th></tr></thead>
@@ -770,7 +852,7 @@ async function showBoard(tab = "top") {
             <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td>${esc(gensLabel(a.gens || []))}</td></tr>`).join("")}</tbody>
         </table></div>` : `<p class="empty">Todavía no tienes partidas guardadas.</p>`;
     } else {
-      const rows = await rpc("leaderboard", { p_limit: 50 });
+      const rows = await rpc("leaderboard", { p_mode: mode, p_limit: 50 });
       html = rows.length ? `
         <div class="board"><table>
           <thead><tr><th>#</th><th>JUGADOR</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th class="r">PARTIDAS</th></tr></thead>
