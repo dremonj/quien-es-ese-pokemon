@@ -176,6 +176,35 @@
     font-family: var(--font-display); font-size: 11px; padding: 8px 12px; border-radius: 6px;
     background: var(--screen-ink); color: var(--screen); white-space: nowrap;
   }
+  /* Consola + panel lateral; en pantallas estrechas el panel baja debajo */
+  .layout { width: 100%; max-width: 880px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; justify-content: center; }
+  .dex { flex: 1 1 400px; }
+  .side {
+    flex: 1 1 260px; max-width: 560px; min-width: 0;
+    background: var(--panel); color: var(--ink); border-radius: 16px; padding: 18px;
+    box-shadow: inset 0 -6px 0 #d9cdb8, 0 20px 50px rgba(0,0,0,.4);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .side h3 { font-family: var(--font-display); font-size: 10px; margin: 0; letter-spacing: 1px; color: var(--muted); }
+  .champ {
+    background: var(--ink); color: var(--panel); border-radius: 12px; padding: 16px; text-align: center;
+    border: 3px solid var(--gold); display: flex; flex-direction: column; gap: 8px;
+  }
+  .champ .crown { font-family: var(--font-display); font-size: 9px; color: var(--gold); letter-spacing: 1px; }
+  .champ .who { font-family: var(--font-display); font-size: 15px; overflow-wrap: anywhere; line-height: 1.5; }
+  .champ .pts { font-family: var(--font-display); font-size: 22px; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .champ .meta { font-size: 13px; opacity: .8; }
+  .top10 { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
+  .top10 li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; font-size: 14px; }
+  .top10 li:nth-child(odd) { background: #f1e9db; }
+  .top10 li.me { background: var(--gold); font-weight: 800; }
+  .top10 .pos { font-family: var(--font-display); font-size: 9px; color: var(--muted); }
+  .top10 .u { overflow-wrap: anywhere; font-weight: 800; }
+  .side .note { font-size: 12px; color: var(--muted); margin: 0; }
+  .auth { display: flex; flex-direction: column; gap: 10px; }
+  .field input.plain { text-transform: none; }
+  .link { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; font-weight: 800; padding: 0; align-self: flex-start; }
+  .ok-msg { color: var(--ok); font-weight: 800; }
   @media (max-width: 420px) { .opt { font-size: 14px; padding: 12px 8px; } .dex { padding: 14px; } }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -183,6 +212,7 @@
 </style>
 </head>
 <body>
+<div class="layout">
 <main class="dex">
   <div class="top">
     <div class="lens" id="lens"></div>
@@ -202,6 +232,16 @@
   </div>
 </main>
 
+<aside class="side" aria-label="Ranking">
+  <h3>MEJOR ENTRENADOR</h3>
+  <div class="champ" id="champ"><div class="meta">Cargando ranking…</div></div>
+  <h3>TOP 10</h3>
+  <ol class="top10" id="top10"></ol>
+  <p class="note" id="sideNote"></p>
+</aside>
+</div>
+
+<script src="config.js"></script>
 <script>
 const API = "https://pokeapi.co/api/v2";
 const GENS = [
@@ -248,7 +288,8 @@ const store = {
 let state = null;
 let sound = store.get("wtp-sound", true);
 let selectedGens = store.get("wtp-gens", [1]);
-let playerName = store.get("wtp-name", "ENTRENADOR");
+let session = store.get("wtp-session", null);   // { token, username } o null
+let guest = false;                               // jugando sin cuenta: no se guarda nada
 let timerId = null;
 let nextRound = null;      // ronda precargada
 
@@ -263,6 +304,74 @@ renderSound();
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+
+/* ---------- Base de datos (Supabase, solo funciones RPC de supabase.sql) ---------- */
+const DB = window.POKE_DB || {};
+const dbReady = !!(DB.url && DB.key);
+
+async function rpc(fn, params = {}) {
+  if (!dbReady) throw new Error("La base de datos no está configurada (config.js).");
+  let r;
+  try {
+    r = await fetch(`${DB.url.replace(/\/$/, "")}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: DB.key },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error("No se pudo conectar con la base de datos.");
+  }
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((data && data.message) || "Error de la base de datos (" + r.status + ")");
+  return data;
+}
+
+function setSession(s) {
+  session = s;
+  store.set("wtp-session", s);
+}
+
+// comprueba al cargar que la sesión guardada sigue siendo válida
+async function checkSession() {
+  if (!session || !dbReady) return;
+  try {
+    const name = await rpc("whoami", { p_token: session.token });
+    if (!name) { setSession(null); if (!state) showMenu(); }
+  } catch {}
+}
+
+/* ---------- Panel lateral: campeón y top 10 ---------- */
+async function refreshSide() {
+  const $champ = document.getElementById("champ");
+  const $top = document.getElementById("top10");
+  const $note = document.getElementById("sideNote");
+  if (!dbReady) {
+    $champ.innerHTML = `<div class="meta">Ranking no disponible: falta configurar la base de datos.</div>`;
+    return;
+  }
+  try {
+    const rows = await rpc("leaderboard", { p_limit: 10 });
+    if (!rows.length) {
+      $champ.innerHTML = `<div class="crown">CAMPEÓN</div><div class="meta">Nadie ha jugado todavía. ¡El primer puesto es tuyo!</div>`;
+      $top.innerHTML = "";
+    } else {
+      const c = rows[0];
+      $champ.innerHTML = `
+        <div class="crown">★ CAMPEÓN ★</div>
+        <div class="who">${esc(c.username)}</div>
+        <div class="pts">${c.best_score}</div>
+        <div class="meta">Nivel ${c.level} · ${c.hits} aciertos · media ${fmtSec(c.avg_time)}</div>`;
+      $top.innerHTML = rows.map((r, i) => `
+        <li class="${session && r.username === session.username ? "me" : ""}">
+          <span class="pos">${i + 1}</span><span class="u">${esc(r.username)}</span><span>${r.best_score}</span>
+        </li>`).join("");
+    }
+    $note.textContent = "Actualizado a las " + new Date().toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+  } catch (e) {
+    $note.textContent = e.message;
+  }
+}
+setInterval(() => { if (!document.hidden) refreshSide(); }, 30000);
 
 async function getJSON(url) {
   const r = await fetch(url);
@@ -342,16 +451,73 @@ async function buildRound(level, recent) {
 }
 
 /* ---------- Pantallas ---------- */
+function showLogin(msg = "") {
+  state = null;
+  $screen.innerHTML = `
+    <form class="menu auth" id="authForm" novalidate>
+      <h2>Entra para guardar tus partidas</h2>
+      <p>Solo necesitas un usuario y una contraseña. Si no tienes cuenta, escribe los que quieras y pulsa CREAR CUENTA.</p>
+      <label class="field" for="authUser">Usuario
+        <input id="authUser" class="plain" maxlength="16" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ash_ketchum">
+      </label>
+      <label class="field" for="authPass">Contraseña
+        <input id="authPass" class="plain" type="password" autocomplete="current-password" placeholder="mínimo 4 caracteres">
+      </label>
+      <div class="err" id="authErr">${esc(msg)}</div>
+      ${dbReady ? "" : `<p class="err">La base de datos no está configurada todavía (config.js). Puedes jugar sin cuenta.</p>`}
+      <button class="link" type="button" id="guestBtn">Jugar sin cuenta (no se guarda nada)</button>
+      <button type="submit" hidden></button>
+    </form>`;
+  $controls.innerHTML = `
+    <button class="big" type="button" id="loginBtn">ENTRAR</button>
+    <button class="big" type="button" id="signupBtn">CREAR CUENTA</button>`;
+
+  const $err = document.getElementById("authErr");
+  const go = async kind => {
+    const u = document.getElementById("authUser").value.trim().toLowerCase();
+    const p = document.getElementById("authPass").value;
+    if (!/^[a-z0-9_]{3,16}$/.test(u)) { $err.textContent = "El usuario debe tener de 3 a 16 caracteres: letras, números o _"; return; }
+    if (p.length < 4) { $err.textContent = "La contraseña debe tener al menos 4 caracteres."; return; }
+    $err.textContent = "Conectando…";
+    $controls.querySelectorAll("button").forEach(b => b.disabled = true);
+    try {
+      const s = await rpc(kind, { p_username: u, p_password: p });
+      setSession(s);
+      guest = false;
+      showMenu();
+      refreshSide();
+    } catch (e) {
+      $err.textContent = e.message;
+      $controls.querySelectorAll("button").forEach(b => b.disabled = false);
+    }
+  };
+  document.getElementById("loginBtn").onclick = () => go("login");
+  document.getElementById("signupBtn").onclick = () => go("register");
+  document.getElementById("authForm").onsubmit = e => { e.preventDefault(); go("login"); };
+  document.getElementById("authForm").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go("login"); } };
+  document.getElementById("guestBtn").onclick = () => { guest = true; showMenu(); };
+  document.getElementById("authUser").focus();
+}
+
+async function logout() {
+  const t = session && session.token;
+  setSession(null);
+  guest = false;
+  showLogin();
+  refreshSide();
+  if (t) rpc("logout", { p_token: t }).catch(() => {});
+}
+
 function showMenu() {
   state = null;
-  const best = store.get("wtp-best", 0);
+  if (!session && !guest) return showLogin();
   $screen.innerHTML = `
     <div class="menu">
       <h2>Adivina el Pokémon por su silueta</h2>
       <p>Un fallo y se acaba la partida. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
-      <label class="field" for="playerName">Nombre de entrenador
-        <input id="playerName" maxlength="12" autocomplete="off" value="${esc(store.get("wtp-name", ""))}" placeholder="ASH">
-      </label>
+      <p>${session
+        ? `Jugando como <b>${esc(session.username)}</b>. <button class="link" type="button" id="logoutBtn">Salir</button>`
+        : `Jugando sin cuenta: tus partidas no se guardan. <button class="link" type="button" id="toLogin">Entrar</button>`}</p>
       <div class="gens" id="gens">
         ${GENS.map(g => `
           <label><input type="checkbox" id="gen${g.n}" value="${g.n}" ${selectedGens.includes(g.n) ? "checked" : ""}>
@@ -361,9 +527,12 @@ function showMenu() {
         <button class="small" type="button" id="allBtn">TODAS</button>
         <button class="small" type="button" id="noneBtn">SOLO KANTO</button>
       </div>
-      <div class="best">RÉCORD: ${best}</div>
       <div class="err" id="err"></div>
     </div>`;
+  const $lo = document.getElementById("logoutBtn");
+  if ($lo) $lo.onclick = logout;
+  const $tl = document.getElementById("toLogin");
+  if ($tl) $tl.onclick = () => { guest = false; showLogin(); };
   const setAll = v => { document.querySelectorAll("#gens input").forEach((c, i) => c.checked = v === "all" || i === 0); };
   document.getElementById("allBtn").onclick = () => setAll("all");
   document.getElementById("noneBtn").onclick = () => setAll("kanto");
@@ -381,8 +550,6 @@ function newState() {
 async function startGame() {
   const checked = [...document.querySelectorAll("#gens input:checked")].map(c => +c.value);
   if (!checked.length) { document.getElementById("err").textContent = "Elige al menos una generación."; return; }
-  const name = document.getElementById("playerName").value.trim().toUpperCase() || "ENTRENADOR";
-  playerName = name; store.set("wtp-name", name);
   selectedGens = checked; store.set("wtp-gens", checked);
   state = newState();
   nextRound = null;
@@ -530,44 +697,41 @@ function avgOf(times) {
 function fmtSec(s) { return s == null ? "—" : s.toFixed(2) + "s"; }
 function avgTime(times) { return fmtSec(avgOf(times)); }
 
-// guarda el intento actual en el scoreboard (también si se abandona desde el menú)
-function saveAttempt() {
-  const attempt = {
-    id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
-    name: playerName, score: state.score, level: state.level, hits: state.hits,
-    rounds: state.round, bestStreak: state.bestStreak, avgTime: avgOf(state.times),
-    gens: [...selectedGens], date: new Date().toISOString(),
-  };
-  const board = store.get("wtp-board", []);
-  board.push(attempt);
-  store.set("wtp-board", board.slice(-500));
-  if (state.score > store.get("wtp-best", 0)) store.set("wtp-best", state.score);
-  return { attempt, board };
+// guarda la partida en la base de datos (también si se abandona desde el menú)
+function saveAttempt(g = state) {
+  if (!session || !dbReady || !g) return Promise.resolve(null);
+  const p = rpc("submit_score", {
+    p_token: session.token, p_score: g.score, p_level: g.level, p_hits: g.hits,
+    p_avg_time: avgOf(g.times), p_gens: [...selectedGens],
+  });
+  p.then(refreshSide, e => { if (/sesión/i.test(e.message)) setSession(null); });
+  return p;
 }
 
 function gameOver() {
-  const best = store.get("wtp-best", 0);
-  const record = state.score > best;
-  if (record) store.set("wtp-best", state.score);
-
-  const { attempt, board } = saveAttempt();
-  const rank = [...board].sort((a, b) => b.score - a.score).findIndex(a => a.id === attempt.id) + 1;
-
+  const g = state;
+  state = null;
   $screen.innerHTML = `
     <div class="menu over">
       <h2>FIN DEL JUEGO</h2>
-      <div class="score">${state.score}</div>
-      <p>${record ? "¡Nuevo récord!" : `Récord: ${best}`}</p>
-      <p>${esc(playerName)} · Nivel ${state.level} · ${state.hits} aciertos</p>
-      <p>Tiempo medio por respuesta: <b>${avgTime(state.times)}</b></p>
-      <p>Puesto <b>#${rank}</b> de ${board.length} intentos.</p>
+      <div class="score">${g.score}</div>
+      <p>${session ? esc(session.username) + " · " : ""}Nivel ${g.level} · ${g.hits} aciertos</p>
+      <p>Tiempo medio por respuesta: <b>${avgTime(g.times)}</b></p>
+      <p id="saveMsg">${session && dbReady ? "Guardando partida…" : "Jugando sin cuenta: esta partida no se guarda."}</p>
     </div>`;
-  state = null;
   $controls.innerHTML = `
     <button class="big" type="button" id="again">OTRA VEZ</button>
     <button class="big" type="button" id="toBoard">SCOREBOARD</button>`;
   document.getElementById("again").onclick = () => { state = newState(); nextRound = null; playRound(); };
-  document.getElementById("toBoard").onclick = () => showBoard("top", attempt.id);
+  document.getElementById("toBoard").onclick = () => showBoard("top");
+
+  saveAttempt(g).then(res => {
+    const $m = document.getElementById("saveMsg");
+    if ($m && res) $m.innerHTML = `<span class="ok-msg">Partida guardada.</span> Tu mejor puntuación: <b>${res.best}</b> · puesto <b>#${res.rank}</b> del ranking.`;
+  }, e => {
+    const $m = document.getElementById("saveMsg");
+    if ($m) $m.innerHTML = `<span class="err">No se pudo guardar: ${esc(e.message)}</span>`;
+  });
 }
 
 function fmtDate(iso) {
@@ -576,41 +740,53 @@ function fmtDate(iso) {
          d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
 }
 
-function showBoard(tab = "top", highlight = null, confirmClear = false) {
+let boardReq = 0;  // evita pintar una respuesta antigua si se cambia de pestaña rápido
+async function showBoard(tab = "top") {
   stopTimer();
   state = null;
-  const board = store.get("wtp-board", []);
-  const rows = tab === "top"
-    ? [...board].sort((a, b) => b.score - a.score).slice(0, 50)
-    : [...board].reverse().slice(0, 50);
+  const req = ++boardReq;
   $screen.innerHTML = `
     <div class="menu">
       <h2>SCOREBOARD</h2>
       <div class="tabs">
-        <button class="small" type="button" data-tab="top" aria-pressed="${tab === "top"}">MEJORES</button>
-        <button class="small" type="button" data-tab="recent" aria-pressed="${tab === "recent"}">ÚLTIMOS</button>
+        <button class="small" type="button" data-tab="top" aria-pressed="${tab === "top"}">RANKING</button>
+        ${session ? `<button class="small" type="button" data-tab="mine" aria-pressed="${tab === "mine"}">MIS PARTIDAS</button>` : ""}
       </div>
-      ${rows.length ? `
-      <div class="board"><table>
-        <thead><tr><th>#</th><th>NOMBRE</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th>GEN</th><th>FECHA</th></tr></thead>
-        <tbody>${rows.map((a, i) => `
-          <tr class="${a.id === highlight ? "me" : ""}">
-            <td>${i + 1}</td><td>${esc(a.name)}</td><td class="r">${a.score}</td><td class="r">${a.level}</td>
-            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avgTime)}</td><td>${esc(gensLabel(a.gens))}</td><td>${fmtDate(a.date)}</td>
-          </tr>`).join("")}</tbody>
-      </table></div>` : `<p class="empty">Todavía no hay intentos. Juega una partida y aparecerá aquí.</p>`}
-      <p>${board.length} intentos guardados en este navegador.</p>
+      <div id="boardBody" class="loading">CARGANDO…</div>
     </div>`;
-  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab, highlight));
-  $controls.innerHTML = `
-    <button class="big" type="button" id="toMenu">MENÚ</button>
-    <button class="big" type="button" id="clearBtn" ${board.length ? "" : "disabled"}>${confirmClear ? "¿SEGURO? BORRAR" : "BORRAR TODO"}</button>`;
+  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab));
+  $controls.innerHTML = `<button class="big" type="button" id="toMenu" style="grid-column:1/-1">MENÚ</button>`;
   document.getElementById("toMenu").onclick = showMenu;
-  document.getElementById("clearBtn").onclick = () => {
-    if (!confirmClear) return showBoard(tab, highlight, true);
-    store.set("wtp-board", []); store.set("wtp-best", 0);
-    showBoard(tab);
-  };
+
+  let html;
+  try {
+    if (tab === "mine" && session) {
+      const rows = await rpc("my_scores", { p_token: session.token, p_limit: 50 });
+      html = rows.length ? `
+        <div class="board"><table>
+          <thead><tr><th>FECHA</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th>GEN</th></tr></thead>
+          <tbody>${rows.map(a => `
+            <tr><td>${fmtDate(a.created_at)}</td><td class="r">${a.score}</td><td class="r">${a.level}</td>
+            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td>${esc(gensLabel(a.gens || []))}</td></tr>`).join("")}</tbody>
+        </table></div>` : `<p class="empty">Todavía no tienes partidas guardadas.</p>`;
+    } else {
+      const rows = await rpc("leaderboard", { p_limit: 50 });
+      html = rows.length ? `
+        <div class="board"><table>
+          <thead><tr><th>#</th><th>JUGADOR</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th class="r">PARTIDAS</th></tr></thead>
+          <tbody>${rows.map((a, i) => `
+            <tr class="${session && a.username === session.username ? "me" : ""}">
+            <td>${i + 1}</td><td>${esc(a.username)}</td><td class="r">${a.best_score}</td><td class="r">${a.level}</td>
+            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td class="r">${a.games}</td></tr>`).join("")}</tbody>
+        </table></div>
+        <p>Mejor partida de cada jugador.</p>` : `<p class="empty">Nadie ha jugado todavía.</p>`;
+    }
+  } catch (e) {
+    html = `<p class="err">${esc(e.message)}</p>`;
+  }
+  if (req !== boardReq) return;
+  const body = document.getElementById("boardBody");
+  if (body) { body.className = ""; body.innerHTML = html; }
 }
 
 document.addEventListener("keydown", e => {
@@ -624,6 +800,8 @@ document.addEventListener("keydown", e => {
 });
 
 showMenu();
+refreshSide();
+checkSession();
 </script>
 </body>
 </html>

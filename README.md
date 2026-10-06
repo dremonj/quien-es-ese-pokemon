@@ -6,8 +6,17 @@ Juego web para adivinar Pokémon por su silueta. Los datos se obtienen de la [Po
 
 ## Cómo se juega
 
+- Entra con un usuario y una contraseña (o crea una cuenta). También se puede jugar sin cuenta, pero entonces no se guarda nada.
 - Aparece la silueta de un Pokémon y eliges su nombre entre varias opciones (teclas 1–8 o clic).
 - Un fallo y se acaba la partida. Cada 5 aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas.
 - Puedes elegir las generaciones (1 a 9).
 - Al terminar ves tu tiempo medio por respuesta.
-- Cada partida se guarda en un scoreboard local (en tu navegador).
+- Todas las partidas se guardan en la base de datos. Al lado del juego se ve el mejor jugador y el top 10.
+
+## Base de datos
+
+Los usuarios y las puntuaciones se guardan en [Supabase](https://supabase.com/).
+
+- `supabase.sql` crea las tablas y las funciones. Ejecútalo en el SQL Editor de Supabase.
+- `config.js` contiene la URL del proyecto y la clave pública (publishable). Nunca pongas ahí la clave secret o service_role.
+- Las tablas no se pueden leer desde la web; solo se accede mediante las funciones `register`, `login`, `submit_score`, `leaderboard`, etc. Las contraseñas se guardan cifradas con bcrypt.
