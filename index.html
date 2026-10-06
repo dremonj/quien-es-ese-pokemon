@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>¿Quién es ese Pokémon?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@600;800&display=swap">
+<style>
+  /* Layout: una consola tipo Pokédex centrada; pantalla arriba, botonera abajo */
+  :root {
+    --shell: #c8102e;
+    --shell-dark: #8e0b20;
+    --screen: #dfe8d0;
+    --screen-ink: #1d2b1a;
+    --panel: #fdf7ee;
+    --ink: #1b1b22;
+    --muted: #6b6470;
+    --gold: #ffcb05;
+    --blue: #3b6fd4;
+    --ok: #2f9e44;
+    --bad: #d6336c;
+    --font-display: "Press Start 2P", ui-monospace, monospace;
+    --font-body: "Nunito", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(circle at 20% 10%, #2a2340, #120f1c 70%);
+    color: var(--ink);
+    font-family: var(--font-body);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 24px 16px;
+  }
+  .dex {
+    width: 100%; max-width: 560px;
+    background: var(--shell);
+    border-radius: 20px 20px 20px 60px;
+    padding: 20px;
+    box-shadow: inset 0 -8px 0 var(--shell-dark), 0 20px 50px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .top { display: flex; align-items: center; gap: 12px; }
+  .lens {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #9fd8ff, #1e74c9 60%, #0b3a6b);
+    border: 4px solid #fff; flex: none;
+    box-shadow: 0 0 0 3px var(--shell-dark);
+  }
+  .lens.blink { animation: blink .5s ease 2; }
+  @keyframes blink { 50% { filter: brightness(1.8); } }
+  .leds { display: flex; gap: 6px; }
+  .leds span { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--shell-dark); }
+  .leds span:nth-child(1) { background: #ff5a5f; }
+  .leds span:nth-child(2) { background: var(--gold); }
+  .leds span:nth-child(3) { background: #5ad16f; }
+  h1 {
+    font-family: var(--font-display); font-size: clamp(10px, 2.6vw, 14px);
+    color: #fff; margin: 0 0 0 auto; text-align: right; line-height: 1.6;
+    text-shadow: 2px 2px 0 var(--shell-dark);
+  }
+
+  .bezel { background: #e9e4dc; border-radius: 10px 10px 10px 36px; padding: 14px 16px 22px; }
+  .screen {
+    background: var(--screen); color: var(--screen-ink);
+    border-radius: 6px; min-height: 340px; position: relative; overflow: hidden;
+    border: 3px solid #4d5a46;
+    display: flex; flex-direction: column;
+  }
+  .hud {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    font-family: var(--font-display); font-size: 10px; padding: 10px 12px;
+    border-bottom: 2px dashed #9aab8c; font-variant-numeric: tabular-nums;
+  }
+  .lives { letter-spacing: 2px; color: var(--bad); }
+  .timer { height: 6px; background: #b9c7ac; }
+  .timer > div { height: 100%; width: 100%; background: var(--screen-ink); transform-origin: left; }
+  .stage {
+    flex: 1; display: grid; place-items: center; position: relative; padding: 12px;
+    background: repeating-radial-gradient(circle at 50% 55%, transparent 0 18px, rgba(29,43,26,.06) 18px 20px);
+  }
+  .stage { overflow: hidden; }
+  .stage img {
+    width: min(240px, 60vw); aspect-ratio: 1; object-fit: contain; max-width: 100%;
+    filter: brightness(0); transition: filter .6s ease, transform .6s ease;
+    image-rendering: auto; user-select: none; -webkit-user-drag: none;
+  }
+  .stage img.reveal { filter: none; transform: scale(1.06); }
+  .hud { flex-wrap: wrap; }
+  .lvl { background: var(--screen-ink); color: var(--screen); padding: 3px 6px; border-radius: 4px; }
+  .lvlup { background: var(--gold); color: var(--ink); }
+  .field { display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13px; }
+  .field input {
+    font-family: var(--font-display); font-size: 12px; padding: 10px; border-radius: 8px;
+    border: 2px solid var(--screen-ink); background: #f3f7ec; color: var(--screen-ink); text-transform: uppercase;
+  }
+  .field input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .board { max-height: 300px; overflow: auto; }
+  .board table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .board th { font-family: var(--font-display); font-size: 8px; text-align: left; padding: 6px 4px; border-bottom: 2px solid var(--screen-ink); position: sticky; top: 0; background: var(--screen); }
+  .board td { padding: 6px 4px; border-bottom: 1px dashed #9aab8c; }
+  .board td.r { text-align: right; }
+  .board th.r { text-align: right; }
+  .board tr.me td { background: #c4d6b0; font-weight: 800; }
+  .tabs { display: flex; gap: 8px; }
+  .tabs .small[aria-pressed="true"] { background: var(--gold); color: var(--ink); }
+  .empty { padding: 20px 0; text-align: center; }
+  .loading { font-family: var(--font-display); font-size: 10px; }
+  .pokeball {
+    width: 40px; height: 40px; border-radius: 50%; margin: 0 auto 12px;
+    background: linear-gradient(var(--shell) 0 46%, var(--screen-ink) 46% 54%, #fff 54%);
+    border: 3px solid var(--screen-ink); animation: wobble 1s ease-in-out infinite;
+  }
+  @keyframes wobble { 0%,100% { transform: rotate(-15deg); } 50% { transform: rotate(15deg); } }
+
+  .info { padding: 10px 12px 14px; text-align: center; min-height: 92px; }
+  .info .name { font-family: var(--font-display); font-size: 14px; margin: 4px 0 8px; text-transform: capitalize; }
+  .info .flavor { font-size: 14px; margin: 8px auto 0; max-width: 42ch; line-height: 1.4; }
+  .types { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .type { font-size: 12px; font-weight: 800; color: #fff; padding: 3px 10px; border-radius: 999px; text-shadow: 0 1px 0 rgba(0,0,0,.3); }
+  .num { font-family: var(--font-display); font-size: 9px; color: #55634c; }
+
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .opt {
+    font-family: var(--font-body); font-weight: 800; font-size: 16px;
+    background: var(--panel); color: var(--ink);
+    border: none; border-radius: 10px; padding: 14px 10px; cursor: pointer;
+    box-shadow: 0 5px 0 var(--shell-dark); transition: transform .08s, box-shadow .08s, background .2s;
+    display: flex; align-items: center; gap: 8px; text-align: left; min-width: 0;
+  }
+  .opt kbd {
+    font-family: var(--font-display); font-size: 9px; background: var(--ink); color: var(--panel);
+    border-radius: 4px; padding: 4px 5px; flex: none;
+  }
+  .opt span { overflow-wrap: anywhere; }
+  .opt:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 7px 0 var(--shell-dark); }
+  .opt:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--shell-dark); }
+  .opt:disabled { cursor: default; }
+  .opt.correct { background: var(--ok); color: #fff; }
+  .opt.wrong { background: var(--bad); color: #fff; }
+  .opt.dim { opacity: .55; }
+  button:focus-visible, input:focus-visible + .chip { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+  .bottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .small {
+    font-family: var(--font-display); font-size: 9px; background: var(--ink); color: #fff;
+    border: none; border-radius: 999px; padding: 10px 14px; cursor: pointer;
+  }
+  .big {
+    font-family: var(--font-display); font-size: 12px; background: var(--gold); color: var(--ink);
+    border: none; border-radius: 12px; padding: 16px 20px; cursor: pointer; width: 100%;
+    box-shadow: 0 5px 0 #b08a00;
+  }
+  .big:active { transform: translateY(4px); box-shadow: 0 1px 0 #b08a00; }
+
+  .menu { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .menu h2 { font-family: var(--font-display); font-size: 12px; margin: 0; line-height: 1.6; }
+  .menu p { margin: 0; line-height: 1.45; }
+  .gens { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+  .gens label { position: relative; }
+  .gens input { position: absolute; opacity: 0; }
+  .chip {
+    display: block; text-align: center; padding: 8px 4px; border-radius: 8px; cursor: pointer;
+    border: 2px solid var(--screen-ink); font-weight: 800; font-size: 13px;
+  }
+  .chip small { display: block; font-weight: 600; font-size: 11px; opacity: .75; }
+  .gens input:checked + .chip { background: var(--screen-ink); color: var(--screen); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .best { font-family: var(--font-display); font-size: 10px; }
+  .err { color: var(--bad); font-weight: 800; }
+  .over { text-align: center; }
+  .over .score { font-family: var(--font-display); font-size: 28px; margin: 6px 0; }
+  .toast {
+    position: absolute; top: 46px; left: 50%; transform: translateX(-50%);
+    font-family: var(--font-display); font-size: 11px; padding: 8px 12px; border-radius: 6px;
+    background: var(--screen-ink); color: var(--screen); white-space: nowrap;
+  }
+  @media (max-width: 420px) { .opt { font-size: 14px; padding: 12px 8px; } .dex { padding: 14px; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<main class="dex">
+  <div class="top">
+    <div class="lens" id="lens"></div>
+    <div class="leds"><span></span><span></span><span></span></div>
+    <h1>¿QUIÉN ES ESE<br>POKÉMON?</h1>
+  </div>
+
+  <div class="bezel">
+    <div class="screen" id="screen"></div>
+  </div>
+
+  <div class="controls" id="controls"></div>
+
+  <div class="bottom">
+    <button class="small" id="soundBtn" type="button">SONIDO: ON</button>
+    <button class="small" id="menuBtn" type="button">MENÚ</button>
+  </div>
+</main>
+
+<script>
+const API = "https://pokeapi.co/api/v2";
+const GENS = [
+  { n: 1, name: "Kanto",  from: 1,   to: 151 },
+  { n: 2, name: "Johto",  from: 152, to: 251 },
+  { n: 3, name: "Hoenn",  from: 252, to: 386 },
+  { n: 4, name: "Sinnoh", from: 387, to: 493 },
+  { n: 5, name: "Teselia", from: 494, to: 649 },
+  { n: 6, name: "Kalos",  from: 650, to: 721 },
+  { n: 7, name: "Alola",  from: 722, to: 809 },
+  { n: 8, name: "Galar",  from: 810, to: 905 },
+  { n: 9, name: "Paldea", from: 906, to: 1025 },
+];
+const TYPES = {
+  normal: ["Normal", "#9fa19f"], fire: ["Fuego", "#e62829"], water: ["Agua", "#2980ef"],
+  grass: ["Planta", "#3fa129"], electric: ["Eléctrico", "#d8a800"], ice: ["Hielo", "#3dcef3"],
+  fighting: ["Lucha", "#ff8000"], poison: ["Veneno", "#9141cb"], ground: ["Tierra", "#915121"],
+  flying: ["Volador", "#81b9ef"], psychic: ["Psíquico", "#ef4179"], bug: ["Bicho", "#91a119"],
+  rock: ["Roca", "#afa981"], ghost: ["Fantasma", "#704170"], dragon: ["Dragón", "#5060e1"],
+  dark: ["Siniestro", "#624d4e"], steel: ["Acero", "#60a1b8"], fairy: ["Hada", "#ef70ef"],
+};
+const START_LIVES = 3;
+const HITS_PER_LEVEL = 5;  // aciertos necesarios para subir de nivel
+
+// Dificultad por nivel
+const roundTime   = lvl => Math.max(4, 15 - (lvl - 1) * 1.5);          // 15s, 13.5s, 12s… mínimo 4s
+const optionCount = lvl => lvl >= 6 ? 8 : lvl >= 3 ? 6 : 4;            // más opciones
+const sameType    = lvl => lvl >= 4;                                   // opciones del mismo tipo
+const mirrored    = lvl => lvl >= 5;                                   // silueta en espejo
+const zoomed      = lvl => lvl >= 7;                                   // silueta recortada
+const levelOf     = hits => 1 + Math.floor(hits / HITS_PER_LEVEL);
+
+const $screen = document.getElementById("screen");
+const $controls = document.getElementById("controls");
+const $lens = document.getElementById("lens");
+const $soundBtn = document.getElementById("soundBtn");
+
+const cache = new Map();   // id -> datos del pokémon
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+let state = null;
+let sound = store.get("wtp-sound", true);
+let selectedGens = store.get("wtp-gens", [1]);
+let playerName = store.get("wtp-name", "ENTRENADOR");
+let timerId = null;
+let nextRound = null;      // ronda precargada
+
+function renderSound() { $soundBtn.textContent = "SONIDO: " + (sound ? "ON" : "OFF"); }
+$soundBtn.onclick = () => { sound = !sound; store.set("wtp-sound", sound); renderSound(); };
+document.getElementById("menuBtn").onclick = () => {
+  stopTimer();
+  if (state && state.round > 0) saveAttempt();  // partida abandonada
+  showMenu();
+};
+renderSound();
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+// Junta datos de /pokemon y /pokemon-species; nombre y descripción en español.
+async function getPokemon(id) {
+  if (cache.has(id)) return cache.get(id);
+  const p = Promise.all([getJSON(`${API}/pokemon/${id}`), getJSON(`${API}/pokemon-species/${id}`)])
+    .then(([pk, sp]) => {
+      const es = sp.names.find(n => n.language.name === "es");
+      const flav = sp.flavor_text_entries.filter(f => f.language.name === "es").pop();
+      return {
+        id,
+        name: es ? es.name : pk.name,
+        img: pk.sprites.other?.["official-artwork"]?.front_default || pk.sprites.front_default,
+        types: pk.types.map(t => t.type.name),
+        cry: pk.cries?.latest || pk.cries?.legacy || null,
+        flavor: flav ? flav.flavor_text.replace(/[\n\f­]+/g, " ") : "",
+      };
+    });
+  cache.set(id, p);
+  p.catch(() => cache.delete(id));
+  return p;
+}
+
+function poolIds() {
+  const ids = [];
+  for (const g of GENS) if (selectedGens.includes(g.n)) for (let i = g.from; i <= g.to; i++) ids.push(i);
+  return ids;
+}
+
+const typeCache = new Map();  // tipo -> ids de Pokémon de ese tipo
+function typeIds(type) {
+  if (!typeCache.has(type)) {
+    const p = getJSON(`${API}/type/${type}`).then(d =>
+      d.pokemon.map(x => +x.pokemon.url.split("/").filter(Boolean).pop()).filter(id => id < 10000));
+    typeCache.set(type, p);
+    p.catch(() => typeCache.delete(type));
+  }
+  return typeCache.get(type);
+}
+
+function pickDistinct(arr, n, exclude) {
+  const out = new Set();
+  const avail = arr.filter(x => !exclude.has(x));
+  while (out.size < Math.min(n, avail.length)) out.add(avail[rand(0, avail.length - 1)]);
+  return [...out];
+}
+
+async function buildRound(level, recent) {
+  const ids = poolIds();
+  const n = optionCount(level);
+  let answerId;
+  do { answerId = ids[rand(0, ids.length - 1)]; } while (recent.has(answerId) && recent.size < ids.length - n);
+  const answer = await getPokemon(answerId);
+
+  // a partir de cierto nivel, las opciones falsas comparten tipo con la respuesta
+  let candidates = ids;
+  if (sameType(level)) {
+    try {
+      const pool = new Set(ids);
+      const same = new Set();
+      for (const t of answer.types) (await typeIds(t)).forEach(id => pool.has(id) && same.add(id));
+      same.delete(answerId);
+      if (same.size >= n - 1) candidates = [...same];
+    } catch {}
+  }
+  const others = pickDistinct(candidates, n - 1, new Set([answerId]));
+  if (others.length < n - 1) others.push(...pickDistinct(ids, n - 1 - others.length, new Set([answerId, ...others])));
+  const list = [answer, ...await Promise.all(others.map(getPokemon))];
+  // precarga la imagen para que la silueta aparezca de golpe
+  await new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = answer.img; });
+  return { answer, level, options: list.sort(() => Math.random() - 0.5) };
+}
+
+/* ---------- Pantallas ---------- */
+function showMenu() {
+  state = null;
+  const best = store.get("wtp-best", 0);
+  $screen.innerHTML = `
+    <div class="menu">
+      <h2>Adivina el Pokémon por su silueta</h2>
+      <p>Tienes ${START_LIVES} vidas. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
+      <label class="field" for="playerName">Nombre de entrenador
+        <input id="playerName" maxlength="12" autocomplete="off" value="${esc(store.get("wtp-name", ""))}" placeholder="ASH">
+      </label>
+      <div class="gens" id="gens">
+        ${GENS.map(g => `
+          <label><input type="checkbox" id="gen${g.n}" value="${g.n}" ${selectedGens.includes(g.n) ? "checked" : ""}>
+          <span class="chip">Gen ${g.n}<small>${g.name}</small></span></label>`).join("")}
+      </div>
+      <div class="row">
+        <button class="small" type="button" id="allBtn">TODAS</button>
+        <button class="small" type="button" id="noneBtn">SOLO KANTO</button>
+      </div>
+      <div class="best">RÉCORD: ${best}</div>
+      <div class="err" id="err"></div>
+    </div>`;
+  const setAll = v => { document.querySelectorAll("#gens input").forEach((c, i) => c.checked = v === "all" || i === 0); };
+  document.getElementById("allBtn").onclick = () => setAll("all");
+  document.getElementById("noneBtn").onclick = () => setAll("kanto");
+  $controls.innerHTML = `
+    <button class="big" type="button" id="startBtn">¡JUGAR!</button>
+    <button class="big" type="button" id="boardBtn">SCOREBOARD</button>`;
+  document.getElementById("startBtn").onclick = startGame;
+  document.getElementById("boardBtn").onclick = () => showBoard();
+}
+
+function newState() {
+  return { score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, recent: new Set() };
+}
+
+async function startGame() {
+  const checked = [...document.querySelectorAll("#gens input:checked")].map(c => +c.value);
+  if (!checked.length) { document.getElementById("err").textContent = "Elige al menos una generación."; return; }
+  const name = document.getElementById("playerName").value.trim().toUpperCase() || "ENTRENADOR";
+  playerName = name; store.set("wtp-name", name);
+  selectedGens = checked; store.set("wtp-gens", checked);
+  state = newState();
+  nextRound = null;
+  playRound();
+}
+
+function hud() {
+  return `<div class="hud">
+    <span class="lvl">NIV ${state.level}</span>
+    <span>PTS ${String(state.score).padStart(6, "0")}</span>
+    <span>x${state.streak}</span>
+    <span class="lives">${"♥".repeat(state.lives)}${"♡".repeat(START_LIVES - state.lives)}</span>
+  </div>`;
+}
+
+async function playRound() {
+  stopTimer();
+  state.round++;
+  $screen.innerHTML = `${hud()}<div class="stage"><div class="loading"><div class="pokeball"></div>CARGANDO…</div></div>`;
+  $controls.innerHTML = "";
+  let round;
+  try {
+    // la ronda precargada sirve solo si se generó para el nivel actual
+    let pre = nextRound ? await nextRound.catch(() => null) : null;
+    nextRound = null;
+    round = pre && pre.level === state.level ? pre : await buildRound(state.level, state.recent);
+  } catch (e) {
+    nextRound = null;
+    $screen.innerHTML = `${hud()}<div class="stage"><div class="loading err">No se pudo conectar con la PokéAPI.<br><br>Revisa tu conexión.</div></div>`;
+    $controls.innerHTML = `<button class="big" type="button" style="grid-column:1/-1" id="retry">REINTENTAR</button>`;
+    document.getElementById("retry").onclick = () => { state.round--; playRound(); };
+    return;
+  }
+  if (!state) return;  // volvió al menú mientras cargaba
+  state.current = round;
+  state.answered = false;
+  state.recent.add(round.answer.id);
+  if (state.recent.size > 40) state.recent.delete(state.recent.values().next().value);
+
+  const lvl = state.level;
+  const tf = [];
+  if (zoomed(lvl)) tf.push("scale(1.9)");
+  if (mirrored(lvl)) tf.push("scaleX(-1)");
+  const origin = zoomed(lvl) ? `transform-origin:${rand(25, 75)}% ${rand(25, 75)}%;` : "";
+  $screen.innerHTML = `${hud()}
+    <div class="timer"><div id="bar"></div></div>
+    <div class="stage"><img id="poke" src="${esc(round.answer.img)}" alt="Silueta de un Pokémon misterioso" draggable="false" style="${tf.length ? `transform:${tf.join(" ")};` : ""}${origin}"></div>
+    <div class="info" id="info"><div class="num">RONDA ${state.round} · ${roundTime(lvl).toFixed(1)}s</div><div class="name">???</div></div>`;
+  $controls.innerHTML = round.options.map((o, i) =>
+    `<button class="opt" type="button" data-id="${o.id}"><kbd>${i + 1}</kbd><span>${esc(o.name)}</span></button>`).join("");
+  $controls.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(+b.dataset.id));
+  startTimer(roundTime(lvl));
+}
+
+function startTimer(total) {
+  const bar = document.getElementById("bar");
+  const t0 = performance.now();
+  const tick = () => {
+    const left = Math.max(0, total - (performance.now() - t0) / 1000);
+    state.timeLeft = left;
+    if (bar) bar.style.transform = `scaleX(${left / total})`;
+    if (left <= 0) { answer(null); return; }
+    timerId = requestAnimationFrame(tick);
+  };
+  timerId = requestAnimationFrame(tick);
+}
+function stopTimer() { if (timerId) cancelAnimationFrame(timerId); timerId = null; }
+
+function answer(id) {
+  if (!state || state.answered) return;
+  state.answered = true;
+  stopTimer();
+  const ans = state.current.answer;
+  const ok = id === ans.id;
+
+  let gained = 0, levelUp = false;
+  if (ok) {
+    state.streak++;
+    state.bestStreak = Math.max(state.bestStreak, state.streak);
+    gained = Math.round((100 + state.timeLeft * 10) * Math.min(1 + (state.streak - 1) * 0.5, 4) * state.level);
+    state.score += gained;
+    state.hits++;
+    const lvl = levelOf(state.hits);
+    if (lvl > state.level) { state.level = lvl; levelUp = true; }
+  } else {
+    state.streak = 0;
+    state.lives--;
+  }
+
+  $controls.querySelectorAll(".opt").forEach(b => {
+    b.disabled = true;
+    const bid = +b.dataset.id;
+    if (bid === ans.id) b.classList.add("correct");
+    else if (bid === id) b.classList.add("wrong");
+    else b.classList.add("dim");
+  });
+
+  const img = document.getElementById("poke");
+  img.style.transform = ""; img.style.transformOrigin = "";
+  img.classList.add("reveal");
+  img.alt = ans.name;
+  if (state.lives > 0) { nextRound = buildRound(state.level, state.recent); nextRound.catch(() => {}); }  // precarga la siguiente
+  $lens.classList.remove("blink"); void $lens.offsetWidth; $lens.classList.add("blink");
+  document.querySelector(".hud").outerHTML = hud();
+  document.getElementById("info").innerHTML = `
+    <div class="num">Nº ${String(ans.id).padStart(4, "0")}</div>
+    <div class="name">${esc(ans.name)}</div>
+    <div class="types">${ans.types.map(t => `<span class="type" style="background:${(TYPES[t] || [t, "#777"])[1]}">${esc((TYPES[t] || [t])[0])}</span>`).join("")}</div>
+    ${ans.flavor ? `<p class="flavor">${esc(ans.flavor)}</p>` : ""}`;
+
+  const stage = document.querySelector(".stage");
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = ok ? `¡CORRECTO! +${gained}` : id === null ? "¡TIEMPO!" : "¡FALLASTE!";
+  stage.appendChild(toast);
+  if (levelUp) {
+    const up = document.createElement("div");
+    up.className = "toast lvlup"; up.style.top = "84px";
+    up.textContent = `¡NIVEL ${state.level}! ${roundTime(state.level).toFixed(1)}s`;
+    stage.appendChild(up);
+  }
+
+  if (sound && ans.cry) { const a = new Audio(ans.cry); a.volume = 0.35; a.play().catch(() => {}); }
+
+  const btn = document.createElement("button");
+  btn.className = "big"; btn.type = "button"; btn.style.gridColumn = "1/-1"; btn.style.marginTop = "6px";
+  btn.textContent = state.lives > 0 ? "SIGUIENTE ▶" : "VER RESULTADO";
+  btn.onclick = () => state.lives > 0 ? playRound() : gameOver();
+  $controls.appendChild(btn);
+  btn.focus();
+}
+
+function gensLabel(gens) {
+  return gens.length === GENS.length ? "Todas" : gens.join(",");
+}
+
+// guarda el intento actual en el scoreboard (también si se abandona desde el menú)
+function saveAttempt() {
+  const attempt = {
+    id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+    name: playerName, score: state.score, level: state.level, hits: state.hits,
+    rounds: state.round, bestStreak: state.bestStreak, gens: [...selectedGens], date: new Date().toISOString(),
+  };
+  const board = store.get("wtp-board", []);
+  board.push(attempt);
+  store.set("wtp-board", board.slice(-500));
+  if (state.score > store.get("wtp-best", 0)) store.set("wtp-best", state.score);
+  return { attempt, board };
+}
+
+function gameOver() {
+  const best = store.get("wtp-best", 0);
+  const record = state.score > best;
+  if (record) store.set("wtp-best", state.score);
+
+  const { attempt, board } = saveAttempt();
+  const rank = [...board].sort((a, b) => b.score - a.score).findIndex(a => a.id === attempt.id) + 1;
+
+  $screen.innerHTML = `
+    <div class="menu over">
+      <h2>FIN DEL JUEGO</h2>
+      <div class="score">${state.score}</div>
+      <p>${record ? "¡Nuevo récord!" : `Récord: ${best}`}</p>
+      <p>${esc(playerName)} · Nivel ${state.level} · ${state.hits}/${state.round} aciertos · mejor racha ${state.bestStreak}</p>
+      <p>Puesto <b>#${rank}</b> de ${board.length} intentos.</p>
+    </div>`;
+  state = null;
+  $controls.innerHTML = `
+    <button class="big" type="button" id="again">OTRA VEZ</button>
+    <button class="big" type="button" id="toBoard">SCOREBOARD</button>`;
+  document.getElementById("again").onclick = () => { state = newState(); nextRound = null; playRound(); };
+  document.getElementById("toBoard").onclick = () => showBoard("top", attempt.id);
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("es", { day: "2-digit", month: "2-digit" }) + " " +
+         d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+}
+
+function showBoard(tab = "top", highlight = null, confirmClear = false) {
+  stopTimer();
+  state = null;
+  const board = store.get("wtp-board", []);
+  const rows = tab === "top"
+    ? [...board].sort((a, b) => b.score - a.score).slice(0, 50)
+    : [...board].reverse().slice(0, 50);
+  $screen.innerHTML = `
+    <div class="menu">
+      <h2>SCOREBOARD</h2>
+      <div class="tabs">
+        <button class="small" type="button" data-tab="top" aria-pressed="${tab === "top"}">MEJORES</button>
+        <button class="small" type="button" data-tab="recent" aria-pressed="${tab === "recent"}">ÚLTIMOS</button>
+      </div>
+      ${rows.length ? `
+      <div class="board"><table>
+        <thead><tr><th>#</th><th>NOMBRE</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th>GEN</th><th>FECHA</th></tr></thead>
+        <tbody>${rows.map((a, i) => `
+          <tr class="${a.id === highlight ? "me" : ""}">
+            <td>${i + 1}</td><td>${esc(a.name)}</td><td class="r">${a.score}</td><td class="r">${a.level}</td>
+            <td class="r">${a.hits}/${a.rounds}</td><td>${esc(gensLabel(a.gens))}</td><td>${fmtDate(a.date)}</td>
+          </tr>`).join("")}</tbody>
+      </table></div>` : `<p class="empty">Todavía no hay intentos. Juega una partida y aparecerá aquí.</p>`}
+      <p>${board.length} intentos guardados en este navegador.</p>
+    </div>`;
+  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab, highlight));
+  $controls.innerHTML = `
+    <button class="big" type="button" id="toMenu">MENÚ</button>
+    <button class="big" type="button" id="clearBtn" ${board.length ? "" : "disabled"}>${confirmClear ? "¿SEGURO? BORRAR" : "BORRAR TODO"}</button>`;
+  document.getElementById("toMenu").onclick = showMenu;
+  document.getElementById("clearBtn").onclick = () => {
+    if (!confirmClear) return showBoard(tab, highlight, true);
+    store.set("wtp-board", []); store.set("wtp-best", 0);
+    showBoard(tab);
+  };
+}
+
+document.addEventListener("keydown", e => {
+  if (!state || state.answered || !state.current) return;
+  if (e.target.tagName === "INPUT") return;
+  const n = +e.key;
+  if (n >= 1 && n <= 8) {
+    const b = $controls.querySelectorAll(".opt")[n - 1];
+    if (b) answer(+b.dataset.id);
+  }
+});
+
+showMenu();
+</script>
+</body>
+</html>
