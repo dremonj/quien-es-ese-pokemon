@@ -97,10 +97,12 @@
   }
   .field input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
   .board { max-height: 300px; overflow: auto; }
-  .board table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .board table { width: 100%; border-collapse: collapse; font-family: var(--font-display); font-size: 9px; line-height: 1.6; }
   .board th { font-family: var(--font-display); font-size: 8px; text-align: left; padding: 6px 4px; border-bottom: 2px solid var(--screen-ink); position: sticky; top: 0; background: var(--screen); }
-  .board td { padding: 6px 4px; border-bottom: 1px dashed #9aab8c; }
-  .board td.r { text-align: right; }
+  .board td { padding: 8px 4px; border-bottom: 1px dashed #9aab8c; overflow-wrap: anywhere; }
+  .board td.r { text-align: right; white-space: nowrap; }
+  /* en pantallas estrechas se ocultan las columnas secundarias (nivel, aciertos, partidas) */
+  @media (max-width: 520px) { .board .x { display: none; } }
   .board th.r { text-align: right; }
   .board tr.me td { background: #c4d6b0; font-weight: 800; }
   .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -193,9 +195,9 @@
   .champ .crown { font-family: var(--font-display); font-size: 9px; color: var(--gold); letter-spacing: 1px; }
   .champ .who { font-family: var(--font-display); font-size: 15px; overflow-wrap: anywhere; line-height: 1.5; }
   .champ .pts { font-family: var(--font-display); font-size: 22px; color: var(--gold); font-variant-numeric: tabular-nums; }
-  .champ .meta { font-size: 13px; opacity: .8; }
+  .champ .meta { font-family: var(--font-display); font-size: 8px; line-height: 1.8; opacity: .8; }
   .top10 { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
-  .top10 li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; font-size: 14px; }
+  .top10 li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: baseline; padding: 8px; border-radius: 6px; font-family: var(--font-display); font-size: 10px; line-height: 1.5; }
   .top10 li:nth-child(odd) { background: #f1e9db; }
   .top10 li.me { background: var(--gold); font-weight: 800; }
   .top10 .pos { font-family: var(--font-display); font-size: 9px; color: var(--muted); }
@@ -794,20 +796,20 @@ async function showBoard(tab = "top", mode = currentMode) {
       const rows = await rpc("my_scores", { p_token: session.token, p_mode: mode, p_limit: 50 });
       html = rows.length ? `
         <div class="board"><table>
-          <thead><tr><th>FECHA</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th>GEN</th></tr></thead>
+          <thead><tr><th>FECHA</th><th class="r">PTS</th><th class="r x">NIV</th><th class="r x">ACI</th><th class="r">T.MEDIO</th><th>GEN</th></tr></thead>
           <tbody>${rows.map(a => `
-            <tr><td>${fmtDate(a.created_at)}</td><td class="r">${a.score}</td><td class="r">${a.level}</td>
-            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td>${esc(gensLabel(a.gens || []))}</td></tr>`).join("")}</tbody>
+            <tr><td>${fmtDate(a.created_at)}</td><td class="r">${a.score}</td><td class="r x">${a.level}</td>
+            <td class="r x">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td>${esc(gensLabel(a.gens || []))}</td></tr>`).join("")}</tbody>
         </table></div>` : `<p class="empty">Todavía no tienes partidas guardadas.</p>`;
     } else {
       const rows = await rpc("leaderboard", { p_mode: mode, p_limit: 50 });
       html = rows.length ? `
         <div class="board"><table>
-          <thead><tr><th>#</th><th>JUGADOR</th><th class="r">PTS</th><th class="r">NIV</th><th class="r">ACI</th><th class="r">T.MEDIO</th><th class="r">PARTIDAS</th></tr></thead>
+          <thead><tr><th>#</th><th>JUGADOR</th><th class="r">PTS</th><th class="r x">NIV</th><th class="r x">ACI</th><th class="r">T.MEDIO</th><th class="r x">PARTIDAS</th></tr></thead>
           <tbody>${rows.map((a, i) => `
             <tr class="${session && a.username === session.username ? "me" : ""}">
-            <td>${i + 1}</td><td>${esc(a.username)}</td><td class="r">${a.best_score}</td><td class="r">${a.level}</td>
-            <td class="r">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td class="r">${a.games}</td></tr>`).join("")}</tbody>
+            <td>${i + 1}</td><td>${esc(a.username)}</td><td class="r">${a.best_score}</td><td class="r x">${a.level}</td>
+            <td class="r x">${a.hits}</td><td class="r">${fmtSec(a.avg_time)}</td><td class="r x">${a.games}</td></tr>`).join("")}</tbody>
         </table></div>
         <p>Mejor partida de cada jugador.</p>` : `<p class="empty">Nadie ha jugado todavía.</p>`;
     }
