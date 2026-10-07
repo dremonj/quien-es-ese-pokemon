@@ -2,7 +2,7 @@
 
 Juego web para adivinar Pokémon por su silueta. Los datos se obtienen de la [PokéAPI](https://pokeapi.co/).
 
-**Jugar:** http://netanyahu.mataxetos.es/
+**Jugar:** https://netanyahu.mataxetos.es/
 
 ## Cómo se juega
 
