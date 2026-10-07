@@ -218,12 +218,12 @@
   .mode-name { font-family: var(--font-display); font-size: 11px; line-height: 1.5; }
   .mode-desc { font-size: 14px; line-height: 1.4; opacity: .85; }
   .mode-soon { font-size: 13px; opacity: .7; }
-  .side-mode { display: flex; flex-direction: column; gap: 8px; }
-  .side-mode select {
-    font-family: var(--font-body); font-weight: 800; font-size: 14px; padding: 8px 10px; border-radius: 8px;
-    border: 2px solid var(--ink); background: #fff; color: var(--ink); cursor: pointer;
+  /* nombre del modo del ranking, con la fuente pixelada del título */
+  .mode-tag {
+    font-family: var(--font-display); font-size: 10px; line-height: 1.6; letter-spacing: 1px;
+    background: var(--ink); color: var(--gold); border-radius: 8px; padding: 8px 10px; align-self: flex-start;
   }
-  .side-mode select:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .menu .mode-tag { font-size: 9px; }
   @media (max-width: 420px) { .opt { font-size: 14px; padding: 12px 8px; } .dex { padding: 14px; } }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -252,9 +252,8 @@
 </main>
 
 <aside class="side" aria-label="Ranking">
-  <label class="side-mode" for="sideMode"><h3>RANKING DEL MODO</h3>
-    <select id="sideMode"></select>
-  </label>
+  <h3>RANKING</h3>
+  <div class="mode-tag" id="sideMode"></div>
   <h3>MEJOR ENTRENADOR</h3>
   <div class="champ" id="champ"><div class="meta">Cargando ranking…</div></div>
   <h3>TOP 10</h3>
@@ -322,7 +321,7 @@ let session = store.get("wtp-session", null);   // { token, username } o null
 let guest = false;                               // jugando sin cuenta: no se guarda nada
 let currentMode = store.get("wtp-mode", "silueta");
 if (!MODES[currentMode]) currentMode = "silueta";
-let sideMode = currentMode;                      // modo que muestra el panel lateral
+const RANKING_MODE = "silueta";                  // el ranking solo muestra este modo
 let timerId = null;
 
 function renderSound() { $soundBtn.textContent = "SONIDO: " + (sound ? "ON" : "OFF"); }
@@ -333,7 +332,7 @@ document.getElementById("menuBtn").onclick = () => {
   if (state && state.game && !state.over) {
     const mode = state.mode;
     rpc("end_game", { p_game: state.game }).then(res => {
-      if (res) sideMode === mode ? refreshSide() : setSideMode(mode);
+      if (res && mode === RANKING_MODE) refreshSide();
     }, () => {});
   }
   showMenu();
@@ -379,17 +378,7 @@ async function checkSession() {
 }
 
 /* ---------- Panel lateral: campeón y top 10 del modo elegido ---------- */
-const $sideMode = document.getElementById("sideMode");
-$sideMode.innerHTML = Object.entries(MODES).map(([id, m]) => `<option value="${id}">${esc(m.short)}</option>`).join("");
-$sideMode.value = sideMode;
-$sideMode.onchange = () => setSideMode($sideMode.value);
-
-function setSideMode(mode) {
-  if (sideMode === mode) return;
-  sideMode = mode;
-  $sideMode.value = mode;
-  refreshSide();
-}
+document.getElementById("sideMode").textContent = "MODO " + MODES[RANKING_MODE].short.toUpperCase();
 
 let sideReq = 0;
 async function refreshSide() {
@@ -402,7 +391,7 @@ async function refreshSide() {
   }
   const req = ++sideReq;
   try {
-    const rows = await rpc("leaderboard", { p_mode: sideMode, p_limit: 10 });
+    const rows = await rpc("leaderboard", { p_mode: RANKING_MODE, p_limit: 10 });
     if (req !== sideReq) return;  // llegó tarde: ya se pidió otro modo
     if (!rows.length) {
       $champ.innerHTML = `<div class="crown">CAMPEÓN</div><div class="meta">Nadie ha jugado todavía. ¡El primer puesto es tuyo!</div>`;
@@ -538,11 +527,10 @@ function showMenu() {
   $screen.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
     currentMode = b.dataset.mode;
     store.set("wtp-mode", currentMode);
-    setSideMode(currentMode);
     MODES[currentMode].setup();
   });
   $controls.innerHTML = `<button class="big" type="button" id="boardBtn" style="grid-column:1/-1">SCOREBOARD</button>`;
-  document.getElementById("boardBtn").onclick = () => showBoard("top", currentMode);
+  document.getElementById("boardBtn").onclick = () => showBoard("top");
 }
 
 /* ---------- Modo "silueta" ---------- */
@@ -730,7 +718,7 @@ async function answer(choice) {
   btn.onclick = () => res.over ? gameOver() : playRound();
   $controls.appendChild(btn);
   btn.focus();
-  if (res.saved) sideMode === g.mode ? refreshSide() : setSideMode(g.mode);
+  if (res.saved && g.mode === RANKING_MODE) refreshSide();
 }
 
 function gensLabel(gens) {
@@ -757,7 +745,7 @@ function gameOver() {
     <button class="big" type="button" id="again">OTRA VEZ</button>
     <button class="big" type="button" id="toBoard">SCOREBOARD</button>`;
   document.getElementById("again").onclick = startGame;
-  document.getElementById("toBoard").onclick = () => showBoard("top", g.mode);
+  document.getElementById("toBoard").onclick = () => showBoard("top");
 }
 
 function fmtDate(iso) {
@@ -767,26 +755,22 @@ function fmtDate(iso) {
 }
 
 let boardReq = 0;  // evita pintar una respuesta antigua si se cambia de pestaña rápido
-async function showBoard(tab = "top", mode = currentMode) {
+async function showBoard(tab = "top") {
+  const mode = RANKING_MODE;
   stopTimer();
   state = null;
-  if (!MODES[mode]) mode = "silueta";
   const req = ++boardReq;
   $screen.innerHTML = `
     <div class="menu">
       <h2>SCOREBOARD</h2>
-      <div class="tabs" aria-label="Modo de juego">
-        ${Object.entries(MODES).map(([id, m]) =>
-          `<button class="small" type="button" data-bmode="${id}" aria-pressed="${id === mode}">${esc(m.short.toUpperCase())}</button>`).join("")}
-      </div>
+      <div class="mode-tag">MODO ${esc(MODES[mode].short.toUpperCase())}</div>
       <div class="tabs">
         <button class="small" type="button" data-tab="top" aria-pressed="${tab === "top"}">RANKING</button>
         ${session ? `<button class="small" type="button" data-tab="mine" aria-pressed="${tab === "mine"}">MIS PARTIDAS</button>` : ""}
       </div>
       <div id="boardBody" class="loading">CARGANDO…</div>
     </div>`;
-  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab, mode));
-  $screen.querySelectorAll("[data-bmode]").forEach(b => b.onclick = () => showBoard(tab, b.dataset.bmode));
+  $screen.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => showBoard(b.dataset.tab));
   $controls.innerHTML = `<button class="big" type="button" id="toMenu" style="grid-column:1/-1">MENÚ</button>`;
   document.getElementById("toMenu").onclick = showMenu;
 
