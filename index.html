@@ -341,17 +341,17 @@ renderSound();
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 
-/* ---------- Base de datos (Supabase, solo funciones RPC de supabase.sql) ---------- */
+/* ---------- Servidor (server/api.php: hace de árbitro y guarda los datos) ---------- */
 const DB = window.POKE_DB || {};
-const dbReady = !!(DB.url && DB.key);
+const dbReady = !!DB.api;
 
 async function rpc(fn, params = {}) {
-  if (!dbReady) throw new Error("La base de datos no está configurada (config.js).");
+  if (!dbReady) throw new Error("El servidor no está configurado (config.js).");
   let r;
   try {
-    r = await fetch(`${DB.url.replace(/\/$/, "")}/rest/v1/rpc/${fn}`, {
+    r = await fetch(`${DB.api}?fn=${encodeURIComponent(fn)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", apikey: DB.key },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
   } catch {
