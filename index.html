@@ -283,16 +283,13 @@ const TYPES = {
   rock: ["Roca", "#afa981"], ghost: ["Fantasma", "#704170"], dragon: ["Dragón", "#5060e1"],
   dark: ["Siniestro", "#624d4e"], steel: ["Acero", "#60a1b8"], fairy: ["Hada", "#ef70ef"],
 };
-const START_LIVES = 1;     // un fallo y se acaba
 const HITS_PER_LEVEL = 5;  // aciertos necesarios para subir de nivel
 
-// Dificultad por nivel
-const roundTime   = lvl => Math.max(2, 10 * 0.82 ** (lvl - 1));     // 10s, 8.2s, 6.7s, 5.5s… mínimo 2s
-const optionCount = lvl => lvl >= 6 ? 8 : lvl >= 3 ? 6 : 4;            // más opciones
-const sameType    = lvl => lvl >= 4;                                   // opciones del mismo tipo
+// La partida la arbitra la base de datos (supabase.sql: start_game, start_round, answer_round, end_game):
+// elige el Pokémon, mide el tiempo, corrige y guarda la puntuación. Aquí solo se pinta.
+// Efectos visuales por nivel
 const mirrored    = lvl => lvl >= 5;                                   // silueta en espejo
 const zoomed      = lvl => lvl >= 7;                                   // silueta recortada
-const levelOf     = hits => 1 + Math.floor(hits / HITS_PER_LEVEL);
 
 // Modos de juego. Cada modo tiene su propio ranking en la base de datos (columna scores.mode = clave).
 // Para añadir uno: nueva entrada aquí con su pantalla de inicio (setup).
@@ -325,13 +322,18 @@ let currentMode = store.get("wtp-mode", "silueta");
 if (!MODES[currentMode]) currentMode = "silueta";
 let sideMode = currentMode;                      // modo que muestra el panel lateral
 let timerId = null;
-let nextRound = null;      // ronda precargada
 
 function renderSound() { $soundBtn.textContent = "SONIDO: " + (sound ? "ON" : "OFF"); }
 $soundBtn.onclick = () => { sound = !sound; store.set("wtp-sound", sound); renderSound(); };
 document.getElementById("menuBtn").onclick = () => {
   stopTimer();
-  if (state && state.round > 0) saveAttempt();  // partida abandonada
+  // partida abandonada: la base de datos la cierra y guarda los puntos que lleve
+  if (state && state.game && !state.over) {
+    const mode = state.mode;
+    rpc("end_game", { p_game: state.game }).then(res => {
+      if (res) sideMode === mode ? refreshSide() : setSideMode(mode);
+    }, () => {});
+  }
   showMenu();
 };
 renderSound();
@@ -428,18 +430,13 @@ async function getJSON(url) {
   return r.json();
 }
 
-// Junta datos de /pokemon y /pokemon-species; nombre y descripción en español.
+// Grito y descripción en español del Pokémon (solo se piden después de responder)
 async function getPokemon(id) {
   if (cache.has(id)) return cache.get(id);
   const p = Promise.all([getJSON(`${API}/pokemon/${id}`), getJSON(`${API}/pokemon-species/${id}`)])
     .then(([pk, sp]) => {
-      const es = sp.names.find(n => n.language.name === "es");
       const flav = sp.flavor_text_entries.filter(f => f.language.name === "es").pop();
       return {
-        id,
-        name: es ? es.name : pk.name,
-        img: pk.sprites.other?.["official-artwork"]?.front_default || pk.sprites.front_default,
-        types: pk.types.map(t => t.type.name),
         cry: pk.cries?.latest || pk.cries?.legacy || null,
         flavor: flav ? flav.flavor_text.replace(/[\n\f­]+/g, " ") : "",
       };
@@ -449,54 +446,9 @@ async function getPokemon(id) {
   return p;
 }
 
-function poolIds() {
-  const ids = [];
-  for (const g of GENS) if (selectedGens.includes(g.n)) for (let i = g.from; i <= g.to; i++) ids.push(i);
-  return ids;
-}
-
-const typeCache = new Map();  // tipo -> ids de Pokémon de ese tipo
-function typeIds(type) {
-  if (!typeCache.has(type)) {
-    const p = getJSON(`${API}/type/${type}`).then(d =>
-      d.pokemon.map(x => +x.pokemon.url.split("/").filter(Boolean).pop()).filter(id => id < 10000));
-    typeCache.set(type, p);
-    p.catch(() => typeCache.delete(type));
-  }
-  return typeCache.get(type);
-}
-
-function pickDistinct(arr, n, exclude) {
-  const out = new Set();
-  const avail = arr.filter(x => !exclude.has(x));
-  while (out.size < Math.min(n, avail.length)) out.add(avail[rand(0, avail.length - 1)]);
-  return [...out];
-}
-
-async function buildRound(level, recent) {
-  const ids = poolIds();
-  const n = optionCount(level);
-  let answerId;
-  do { answerId = ids[rand(0, ids.length - 1)]; } while (recent.has(answerId) && recent.size < ids.length - n);
-  const answer = await getPokemon(answerId);
-
-  // a partir de cierto nivel, las opciones falsas comparten tipo con la respuesta
-  let candidates = ids;
-  if (sameType(level)) {
-    try {
-      const pool = new Set(ids);
-      const same = new Set();
-      for (const t of answer.types) (await typeIds(t)).forEach(id => pool.has(id) && same.add(id));
-      same.delete(answerId);
-      if (same.size >= n - 1) candidates = [...same];
-    } catch {}
-  }
-  const others = pickDistinct(candidates, n - 1, new Set([answerId]));
-  if (others.length < n - 1) others.push(...pickDistinct(ids, n - 1 - others.length, new Set([answerId, ...others])));
-  const list = [answer, ...await Promise.all(others.map(getPokemon))];
-  // precarga la imagen para que la silueta aparezca de golpe
-  await new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = answer.img; });
-  return { answer, level, options: list.sort(() => Math.random() - 0.5) };
+// precarga una imagen para que la silueta aparezca de golpe
+function preload(src) {
+  return new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = src; });
 }
 
 /* ---------- Pantallas ---------- */
@@ -615,21 +567,44 @@ function showSiluetaSetup() {
   $controls.innerHTML = `
     <button class="big" type="button" id="startBtn">¡JUGAR!</button>
     <button class="big" type="button" id="backBtn">VOLVER</button>`;
-  document.getElementById("startBtn").onclick = startGame;
+  document.getElementById("startBtn").onclick = readGens;
   document.getElementById("backBtn").onclick = showMenu;
 }
 
-function newState() {
-  return { mode: "silueta", score: 0, lives: START_LIVES, streak: 0, bestStreak: 0, hits: 0, level: 1, round: 0, times: [], recent: new Set() };
+function newState(start) {
+  return { mode: "silueta", game: start.game, nextImg: start.img, score: 0, level: 1, hits: 0, streak: 0, round: 0, avg: null, over: false };
 }
 
-async function startGame() {
+function readGens() {
   const checked = [...document.querySelectorAll("#gens input:checked")].map(c => +c.value);
   if (!checked.length) { document.getElementById("err").textContent = "Elige al menos una generación."; return; }
   selectedGens = checked; store.set("wtp-gens", checked);
-  state = newState();
-  nextRound = null;
-  playRound();
+  startGame();
+}
+
+// pide a la base de datos una partida nueva con las generaciones elegidas
+async function startGame() {
+  stopTimer();
+  state = null;
+  $screen.innerHTML = `<div class="stage"><div class="loading"><div class="pokeball"></div>EMPEZANDO…</div></div>`;
+  $controls.innerHTML = "";
+  try {
+    const start = await rpc("start_game", { p_token: session ? session.token : null, p_mode: "silueta", p_gens: selectedGens });
+    state = newState(start);
+    playRound();
+  } catch (e) {
+    if (/sesión/i.test(e.message)) { setSession(null); return showLogin(e.message); }
+    showError(e.message, startGame);
+  }
+}
+
+function showError(msg, retry) {
+  $screen.innerHTML = `<div class="stage"><div class="loading err">${esc(msg)}<br><br>Revisa tu conexión.</div></div>`;
+  $controls.innerHTML = `
+    <button class="big" type="button" id="retry">REINTENTAR</button>
+    <button class="big" type="button" id="toMenu">MENÚ</button>`;
+  document.getElementById("retry").onclick = retry;
+  document.getElementById("toMenu").onclick = showMenu;
 }
 
 function hud() {
@@ -637,56 +612,51 @@ function hud() {
     <span class="lvl">NIV ${state.level}</span>
     <span>PTS ${String(state.score).padStart(6, "0")}</span>
     <span>x${state.streak}</span>
-    <span>MEDIA ${avgTime(state.times)}</span>
+    <span>MEDIA ${fmtSec(state.avg)}</span>
   </div>`;
 }
 
 async function playRound() {
   stopTimer();
-  state.round++;
+  const g = state;
   $screen.innerHTML = `${hud()}<div class="stage"><div class="loading"><div class="pokeball"></div>CARGANDO…</div></div>`;
   $controls.innerHTML = "";
   let round;
   try {
-    // la ronda precargada sirve solo si se generó para el nivel actual
-    let pre = nextRound ? await nextRound.catch(() => null) : null;
-    nextRound = null;
-    round = pre && pre.level === state.level ? pre : await buildRound(state.level, state.recent);
+    // primero la imagen y luego la ronda: el reloj del servidor empieza al pedir la ronda
+    await preload(g.nextImg);
+    if (state !== g) return;  // volvió al menú mientras cargaba
+    round = await rpc("start_round", { p_game: g.game });
   } catch (e) {
-    nextRound = null;
-    $screen.innerHTML = `${hud()}<div class="stage"><div class="loading err">No se pudo conectar con la PokéAPI.<br><br>Revisa tu conexión.</div></div>`;
-    $controls.innerHTML = `<button class="big" type="button" style="grid-column:1/-1" id="retry">REINTENTAR</button>`;
-    document.getElementById("retry").onclick = () => { state.round--; playRound(); };
+    if (state !== g) return;
+    showError(e.message, playRound);
     return;
   }
-  if (!state) return;  // volvió al menú mientras cargaba
-  state.current = round;
-  state.answered = false;
-  state.recent.add(round.answer.id);
-  if (state.recent.size > 40) state.recent.delete(state.recent.values().next().value);
+  if (state !== g) return;
+  g.round = round.round;
+  g.answered = false;
 
-  const lvl = state.level;
+  const lvl = round.level;
   const tf = [];
   if (zoomed(lvl)) tf.push("scale(1.9)");
   if (mirrored(lvl)) tf.push("scaleX(-1)");
   const origin = zoomed(lvl) ? `transform-origin:${rand(25, 75)}% ${rand(25, 75)}%;` : "";
   $screen.innerHTML = `${hud()}
     <div class="timer"><div id="bar"></div></div>
-    <div class="stage"><img id="poke" src="${esc(round.answer.img)}" alt="Silueta de un Pokémon misterioso" draggable="false" style="${tf.length ? `transform:${tf.join(" ")};` : ""}${origin}"></div>
-    <div class="info" id="info"><div class="num">RONDA ${state.round} · ${roundTime(lvl).toFixed(1)}s</div><div class="name">???</div></div>`;
-  $controls.innerHTML = round.options.map((o, i) =>
-    `<button class="opt" type="button" data-id="${o.id}"><kbd>${i + 1}</kbd><span>${esc(o.name)}</span></button>`).join("");
-  $controls.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(+b.dataset.id));
-  startTimer(roundTime(lvl));
+    <div class="stage"><img id="poke" src="${esc(round.img)}" alt="Silueta de un Pokémon misterioso" draggable="false" style="${tf.length ? `transform:${tf.join(" ")};` : ""}${origin}"></div>
+    <div class="info" id="info"><div class="num">RONDA ${round.round} · ${round.time.toFixed(1)}s</div><div class="name">???</div></div>`;
+  $controls.innerHTML = round.options.map((name, i) =>
+    `<button class="opt" type="button" data-i="${i}"><kbd>${i + 1}</kbd><span>${esc(name)}</span></button>`).join("");
+  $controls.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(+b.dataset.i));
+  startTimer(round.time);
 }
 
+// la barra es solo visual: el tiempo de verdad lo mide el servidor
 function startTimer(total) {
   const bar = document.getElementById("bar");
   const t0 = performance.now();
-  state.t0 = t0; state.roundTotal = total;
   const tick = () => {
     const left = Math.max(0, total - (performance.now() - t0) / 1000);
-    state.timeLeft = left;
     if (bar) bar.style.transform = `scaleX(${left / total})`;
     if (left <= 0) { answer(null); return; }
     timerId = requestAnimationFrame(tick);
@@ -695,119 +665,97 @@ function startTimer(total) {
 }
 function stopTimer() { if (timerId) cancelAnimationFrame(timerId); timerId = null; }
 
-function answer(id) {
-  if (!state || state.answered) return;
-  state.answered = true;
+// choice = posición de la opción (0…7), o null si se acabó el tiempo
+async function answer(choice) {
+  const g = state;
+  if (!g || g.answered !== false) return;
+  g.answered = true;
   stopTimer();
-  const ans = state.current.answer;
-  const ok = id === ans.id;
-  // tiempo de respuesta de esta ronda (si se agota, cuenta el tiempo completo)
-  const elapsed = Math.min(state.roundTotal, (performance.now() - state.t0) / 1000);
-  state.times.push(elapsed);
+  const $opts = [...$controls.querySelectorAll(".opt")];
+  $opts.forEach(b => b.disabled = true);
 
-  let gained = 0, levelUp = false;
-  if (ok) {
-    state.streak++;
-    state.bestStreak = Math.max(state.bestStreak, state.streak);
-    const speed = 1 - elapsed / state.roundTotal;  // 1 = instantáneo, 0 = al límite
-    gained = Math.round((100 + speed * 150) * Math.min(1 + (state.streak - 1) * 0.5, 4) * state.level);
-    state.score += gained;
-    state.hits++;
-    const lvl = levelOf(state.hits);
-    if (lvl > state.level) { state.level = lvl; levelUp = true; }
-  } else {
-    state.streak = 0;
-    state.lives--;
+  let res;
+  try {
+    res = await rpc("answer_round", { p_game: g.game, p_choice: choice });
+  } catch (e) {
+    if (state !== g) return;
+    $screen.innerHTML = `<div class="stage"><div class="loading err">${esc(e.message)}</div></div>`;
+    $controls.innerHTML = `<button class="big" type="button" id="toMenu" style="grid-column:1/-1">MENÚ</button>`;
+    document.getElementById("toMenu").onclick = showMenu;
+    return;
   }
+  if (state !== g) return;
 
-  $controls.querySelectorAll(".opt").forEach(b => {
-    b.disabled = true;
-    const bid = +b.dataset.id;
-    if (bid === ans.id) b.classList.add("correct");
-    else if (bid === id) b.classList.add("wrong");
+  Object.assign(g, { score: res.score, level: res.level, hits: res.hits, streak: res.streak, avg: res.avg_time,
+                     over: res.over, nextImg: res.next_img, saved: res.saved });
+  const ans = res.answer;
+  $opts.forEach((b, i) => {
+    if (i === res.correct) b.classList.add("correct");
+    else if (i === choice) b.classList.add("wrong");
     else b.classList.add("dim");
   });
 
   const img = document.getElementById("poke");
-  img.style.transform = ""; img.style.transformOrigin = "";
-  img.classList.add("reveal");
-  img.alt = ans.name;
-  if (state.lives > 0) { nextRound = buildRound(state.level, state.recent); nextRound.catch(() => {}); }  // precarga la siguiente
+  if (img) { img.style.transform = ""; img.style.transformOrigin = ""; img.classList.add("reveal"); img.alt = ans.name; }
+  if (res.next_img) preload(res.next_img);  // precarga la siguiente
   $lens.classList.remove("blink"); void $lens.offsetWidth; $lens.classList.add("blink");
   document.querySelector(".hud").outerHTML = hud();
-  document.getElementById("info").innerHTML = `
+  const $info = document.getElementById("info");
+  $info.innerHTML = `
     <div class="num">Nº ${String(ans.id).padStart(4, "0")}</div>
     <div class="name">${esc(ans.name)}</div>
-    <div class="types">${ans.types.map(t => `<span class="type" style="background:${(TYPES[t] || [t, "#777"])[1]}">${esc((TYPES[t] || [t])[0])}</span>`).join("")}</div>
-    ${ans.flavor ? `<p class="flavor">${esc(ans.flavor)}</p>` : ""}`;
+    <div class="types">${ans.types.map(t => `<span class="type" style="background:${(TYPES[t] || [t, "#777"])[1]}">${esc((TYPES[t] || [t])[0])}</span>`).join("")}</div>`;
+  getPokemon(ans.id).then(p => {
+    if (p.flavor && $info.isConnected) $info.insertAdjacentHTML("beforeend", `<p class="flavor">${esc(p.flavor)}</p>`);
+    if (sound && p.cry && state === g) { const a = new Audio(p.cry); a.volume = 0.35; a.play().catch(() => {}); }
+  }, () => {});
 
   const stage = document.querySelector(".stage");
   const toast = document.createElement("div");
   toast.className = "toast";
-  toast.textContent = ok ? `¡CORRECTO! +${gained}` : id === null ? "¡TIEMPO!" : "¡FALLASTE!";
+  toast.textContent = res.ok ? `¡CORRECTO! +${res.gained}` : res.late ? "¡TIEMPO!" : "¡FALLASTE!";
   stage.appendChild(toast);
-  if (levelUp) {
+  if (res.level_up) {
     const up = document.createElement("div");
     up.className = "toast lvlup"; up.style.top = "84px";
-    up.textContent = `¡NIVEL ${state.level}! ${roundTime(state.level).toFixed(1)}s`;
+    up.textContent = `¡NIVEL ${res.level}! ${res.next_time.toFixed(1)}s`;
     stage.appendChild(up);
   }
 
-  if (sound && ans.cry) { const a = new Audio(ans.cry); a.volume = 0.35; a.play().catch(() => {}); }
-
   const btn = document.createElement("button");
   btn.className = "big"; btn.type = "button"; btn.style.gridColumn = "1/-1"; btn.style.marginTop = "6px";
-  btn.textContent = state.lives > 0 ? "SIGUIENTE ▶" : "VER RESULTADO";
-  btn.onclick = () => state.lives > 0 ? playRound() : gameOver();
+  btn.textContent = res.over ? "VER RESULTADO" : "SIGUIENTE ▶";
+  btn.onclick = () => res.over ? gameOver() : playRound();
   $controls.appendChild(btn);
   btn.focus();
+  if (res.saved) sideMode === g.mode ? refreshSide() : setSideMode(g.mode);
 }
 
 function gensLabel(gens) {
   return gens.length === GENS.length ? "Todas" : gens.join(",");
 }
 
-function avgOf(times) {
-  return times.length ? times.reduce((s, t) => s + t, 0) / times.length : null;
-}
 function fmtSec(s) { return s == null ? "—" : s.toFixed(2) + "s"; }
-function avgTime(times) { return fmtSec(avgOf(times)); }
-
-// guarda la partida en la base de datos (también si se abandona desde el menú)
-function saveAttempt(g = state) {
-  if (!session || !dbReady || !g) return Promise.resolve(null);
-  const p = rpc("submit_score", {
-    p_token: session.token, p_mode: g.mode, p_score: g.score, p_level: g.level, p_hits: g.hits,
-    p_avg_time: avgOf(g.times), p_gens: [...selectedGens],
-  });
-  p.then(() => { sideMode === g.mode ? refreshSide() : setSideMode(g.mode); }, e => { if (/sesión/i.test(e.message)) setSession(null); });
-  return p;
-}
 
 function gameOver() {
   const g = state;
   state = null;
+  const saved = g.saved
+    ? `<span class="ok-msg">Partida guardada.</span> Tu mejor puntuación: <b>${g.saved.best}</b> · puesto <b>#${g.saved.rank}</b> del ranking de este modo.`
+    : session ? "" : "Jugando sin cuenta: esta partida no se guarda.";
   $screen.innerHTML = `
     <div class="menu over">
       <h2>FIN DEL JUEGO · ${esc(MODES[g.mode].short.toUpperCase())}</h2>
       <div class="score">${g.score}</div>
       <p>${session ? esc(session.username) + " · " : ""}Nivel ${g.level} · ${g.hits} aciertos</p>
-      <p>Tiempo medio por respuesta: <b>${avgTime(g.times)}</b></p>
-      <p id="saveMsg">${session && dbReady ? "Guardando partida…" : "Jugando sin cuenta: esta partida no se guarda."}</p>
+      <p>Tiempo medio por respuesta: <b>${fmtSec(g.avg)}</b></p>
+      <p>${saved}</p>
     </div>`;
   $controls.innerHTML = `
     <button class="big" type="button" id="again">OTRA VEZ</button>
     <button class="big" type="button" id="toBoard">SCOREBOARD</button>`;
-  document.getElementById("again").onclick = () => { state = newState(); nextRound = null; playRound(); };
+  document.getElementById("again").onclick = startGame;
   document.getElementById("toBoard").onclick = () => showBoard("top", g.mode);
-
-  saveAttempt(g).then(res => {
-    const $m = document.getElementById("saveMsg");
-    if ($m && res) $m.innerHTML = `<span class="ok-msg">Partida guardada.</span> Tu mejor puntuación: <b>${res.best}</b> · puesto <b>#${res.rank}</b> del ranking de este modo.`;
-  }, e => {
-    const $m = document.getElementById("saveMsg");
-    if ($m) $m.innerHTML = `<span class="err">No se pudo guardar: ${esc(e.message)}</span>`;
-  });
 }
 
 function fmtDate(iso) {
@@ -872,13 +820,10 @@ async function showBoard(tab = "top", mode = currentMode) {
 }
 
 document.addEventListener("keydown", e => {
-  if (!state || state.answered || !state.current) return;
+  if (!state || state.answered !== false) return;
   if (e.target.tagName === "INPUT") return;
   const n = +e.key;
-  if (n >= 1 && n <= 8) {
-    const b = $controls.querySelectorAll(".opt")[n - 1];
-    if (b) answer(+b.dataset.id);
-  }
+  if (n >= 1 && n <= 8 && $controls.querySelectorAll(".opt")[n - 1]) answer(n - 1);
 });
 
 showMenu();

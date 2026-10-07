@@ -20,4 +20,6 @@ Los usuarios y las puntuaciones se guardan en [Supabase](https://supabase.com/).
 
 - `supabase.sql` crea las tablas y las funciones. Ejecútalo en el SQL Editor de Supabase.
 - `config.js` contiene la URL del proyecto y la clave pública (publishable). Nunca pongas ahí la clave secret o service_role.
-- Las tablas no se pueden leer desde la web; solo se accede mediante las funciones `register`, `login`, `submit_score`, `leaderboard`, etc. Las contraseñas se guardan cifradas con bcrypt.
+- Las tablas no se pueden leer desde la web; solo se accede mediante las funciones `register`, `login`, `start_game`, `leaderboard`, etc. Las contraseñas se guardan cifradas con bcrypt.
+- La partida la arbitra la base de datos, para que no se pueda hacer trampa desde la consola del navegador. Ella elige el Pokémon y las opciones, mide el tiempo, corrige cada respuesta, calcula los puntos y guarda la puntuación al terminar (`start_game`, `start_round`, `answer_round`, `end_game`). La página no conoce la respuesta hasta que contestas y no puede enviar puntuaciones.
+- La tabla `pokemon` (nombre en español, generación y tipos) se rellena al final de `supabase.sql` con datos de la PokéAPI.
