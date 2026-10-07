@@ -2,7 +2,7 @@
 
 Juego web para adivinar Pokémon por su silueta. Los datos se obtienen de la [PokéAPI](https://pokeapi.co/).
 
-**Jugar:** https://dremonj.github.io/quien-es-ese-pokemon/
+**Jugar:** http://netanyahu.mataxetos.es/
 
 ## Cómo se juega
 
@@ -14,12 +14,22 @@ Juego web para adivinar Pokémon por su silueta. Los datos se obtienen de la [Po
 - Tras entrar eliges el modo de juego. Cada modo tiene su propio ranking.
 - Todas las partidas se guardan en la base de datos. Al lado del juego se ve el mejor jugador y el top 10 del modo elegido.
 
-## Base de datos
+## Servidor
 
-Los usuarios y las puntuaciones se guardan en [Supabase](https://supabase.com/).
+La web y el servidor están en un hosting con PHP y MySQL (MariaDB).
 
-- `supabase.sql` crea las tablas y las funciones. Ejecútalo en el SQL Editor de Supabase.
-- `config.js` contiene la URL del proyecto y la clave pública (publishable). Nunca pongas ahí la clave secret o service_role.
-- Las tablas no se pueden leer desde la web; solo se accede mediante las funciones `register`, `login`, `start_game`, `leaderboard`, etc. Las contraseñas se guardan cifradas con bcrypt.
-- La partida la arbitra la base de datos, para que no se pueda hacer trampa desde la consola del navegador. Ella elige el Pokémon y las opciones, mide el tiempo, corrige cada respuesta, calcula los puntos y guarda la puntuación al terminar (`start_game`, `start_round`, `answer_round`, `end_game`). La página no conoce la respuesta hasta que contestas y no puede enviar puntuaciones.
-- La tabla `pokemon` (nombre en español, generación y tipos) se rellena al final de `supabase.sql` con datos de la PokéAPI.
+| Archivo | Qué es | ¿Se sube al hosting? |
+|---|---|---|
+| `index.html`, `config.js` | La página del juego | Sí |
+| `server/api.php` | El servidor: cuentas, partidas y ranking | Sí, junto a `index.html` |
+| `server/config.php` | Datos de conexión a MySQL. **No está en GitHub**: créalo copiando `server/config.example.php` | Sí |
+| `server/install.php`, `server/schema.sql`, `server/pokemon.json` | Instalación: crea las tablas y carga los 1025 Pokémon | Solo para instalar; bórralos después |
+
+Para instalar en un hosting nuevo: sube todo a la carpeta de la web, pon una `install_key` larga al azar en `config.php`, abre `install.php?key=<esa clave>` y después borra los archivos de instalación.
+
+### Seguridad
+
+- La web no toca la base de datos: solo llama a `api.php`. Las contraseñas se guardan cifradas con bcrypt.
+- La partida la arbitra el servidor, para que no se pueda hacer trampa desde la consola del navegador. Él elige el Pokémon y las opciones, mide el tiempo, corrige cada respuesta, calcula los puntos y guarda la puntuación al terminar (`start_game`, `start_round`, `answer_round`, `end_game`). La página no conoce la respuesta hasta que contestas y no puede enviar puntuaciones.
+
+Hasta octubre de 2026 el juego estuvo en GitHub Pages con [Supabase](https://supabase.com/) como base de datos; el script de entonces (`supabase.sql`) está en el historial del repositorio.
