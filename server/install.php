@@ -5,7 +5,8 @@
 declare(strict_types=1);
 header('Content-Type: text/plain; charset=utf-8');
 
-$c = require __DIR__ . '/config.php';
+// en local (tu PC) se usa config.local.php si existe; en el servidor, config.php
+$c = require __DIR__ . (is_file(__DIR__ . '/config.local.php') ? '/config.local.php' : '/config.php');
 if (empty($c['install_key']) || !hash_equals($c['install_key'], (string)($_GET['key'] ?? ''))) { http_response_code(403); exit("No autorizado\n"); }
 
 $db = new PDO("mysql:host={$c['db_host']};dbname={$c['db_name']};charset=utf8mb4", $c['db_user'], $c['db_pass'],

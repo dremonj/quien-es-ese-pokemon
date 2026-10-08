@@ -27,7 +27,8 @@ function fail(string $msg): never { throw new Fail($msg); }
 function db(): PDO {
   static $db = null;
   if ($db) return $db;
-  $c = require __DIR__ . '/config.php';
+  // en local (tu PC) se usa config.local.php si existe; en el servidor, config.php
+  $c = require __DIR__ . (is_file(__DIR__ . '/config.local.php') ? '/config.local.php' : '/config.php');
   $db = new PDO("mysql:host={$c['db_host']};dbname={$c['db_name']};charset=utf8mb4", $c['db_user'], $c['db_pass'], [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
