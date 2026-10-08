@@ -1,0 +1,133 @@
+¿QUIÉN ES ESE POKÉMON? — HISTORIAL Y ESTADO DEL PROYECTO
+========================================================
+Última actualización: 8 de octubre de 2026
+
+Este archivo resume todo lo hecho hasta ahora, para retomar el trabajo desde
+cualquier ordenador (o desde otra sesión de Claude Code).
+
+Repositorio:  https://github.com/dremonj/quien-es-ese-pokemon  (público)
+Web pública:  https://netanyahu.mataxetos.es/  (hosting propio con PHP + MySQL/MariaDB)
+Autor:        Dani (dremonj)
+
+
+1. QUÉ ES
+---------
+Juego web para la clase: adivinar Pokémon por su silueta. Los datos de los
+Pokémon salen de la PokéAPI (cargados en la base de datos del servidor desde
+server/pokemon.json; las imágenes vienen del repositorio de sprites de PokéAPI).
+
+- Inicio: iniciar sesión / crear cuenta (solo usuario + contraseña) o jugar sin cuenta.
+- Después: menú de modos de juego. De momento solo existe el modo "silueta".
+- Modo silueta: eliges generaciones (1 a 9), aparece la silueta y eliges el nombre
+  entre varias opciones. Un fallo (o se acaba el tiempo) y termina la partida.
+- Al terminar: puntos, nivel, aciertos y tiempo medio por respuesta.
+- Panel lateral: mejor jugador (campeón) y top 10 del modo silueta.
+- SCOREBOARD: ranking (mejor partida de cada jugador) y "mis partidas".
+
+
+2. ARCHIVOS
+-----------
+index.html            Toda la web (HTML + CSS + JS en un solo archivo). Estética de Pokédex.
+config.js             Dirección de la API: window.POKE_DB = { api: "api.php" }.
+server/api.php        El servidor. La web llama a api.php?fn=<función> con JSON por POST.
+server/schema.sql     Tablas: players, sessions, scores, pokemon, games.
+server/install.php    Instalación de un solo uso (crea tablas y carga los 1025 Pokémon).
+                      Se abre con install.php?key=<install_key>. Borrarlo del hosting después.
+server/pokemon.json   Lista de Pokémon (id, nombre en español, generación, tipos).
+server/config.example.php  Plantilla de config.php.
+server/config.php     Datos de MySQL del hosting. NO está en GitHub (.gitignore). Tiene la
+                      contraseña de la base de datos: nunca subirlo a GitHub ni pegarlo en chats.
+server/config.local.php  Config para pruebas en local (MySQL de XAMPP). NO está en GitHub.
+                      Se crea solo al ejecutar dev.bat. NUNCA subirlo al hosting.
+dev.bat               Arranca el entorno de pruebas local (ver punto 5).
+dev/setup.php         Lo llama dev.bat: crea config.local.php y la base local si faltan.
+dev/router.php        Router del servidor PHP integrado, imita la estructura del hosting.
+README.md             Descripción corta del juego.
+
+
+3. CÓMO FUNCIONA EL SERVIDOR (api.php)
+--------------------------------------
+Funciones: register, login, whoami, logout, leaderboard, my_scores,
+           start_game, start_round, answer_round, end_game.
+
+- Contraseñas cifradas con bcrypt; no se pueden ver. Para resetear una, se cambia
+  el hash en la tabla players (password_hash de PHP) y se borran sus sesiones.
+- La web solo guarda un token de sesión (localStorage "wtp-session"), caduca a los 30 días.
+- ANTI-TRAMPAS: el servidor arbitra la partida. Elige el Pokémon y las opciones,
+  mide el tiempo con su reloj, corrige, calcula los puntos y guarda la puntuación.
+  La web nunca sabe la respuesta antes de contestar ni envía puntos.
+- LATE_MARGIN = 1.5 s de margen por la latencia de la conexión.
+- Cada partida se guarda con su modo (scores.mode). MODES = ['silueta'] en api.php.
+- Restricciones en la tabla scores para el modo silueta:
+  level = 1 + hits DIV 5  y  score <= 1000 * hits * level.
+
+
+4. DIFICULTAD DEL MODO SILUETA (desde el 8/10/2026)
+---------------------------------------------------
+La dificultad depende de los ACIERTOS (h), no del nivel. Está en server/api.php:
+  round_time(h)   = max(2, round(8 * 0.86^h, 1))      segundos
+  option_count(h) = min(16, 4 + 2 * floor(h / 2))     opciones
+
+  Ronda 1: 8 s, 4 opciones      Ronda 8: 2,8 s, 10 opciones
+  Ronda 10: 2,1 s, 12 opciones  Ronda 13 en adelante: 2 s, 16 opciones (máximo)
+
+- Desde el 5º acierto (SAME_TYPE_FROM = 4): opciones falsas del mismo tipo.
+- En index.html: silueta en espejo desde la ronda 6 (hits >= 5) y recortada con
+  zoom desde la ronda 10 (hits >= 9).
+- El NIVEL sigue subiendo cada 5 aciertos (HITS_PER_LEVEL = 5) y solo multiplica
+  los puntos: (100 + rapidez * 150) * multiplicador de racha (hasta x4) * nivel.
+- Con más de 8 opciones los botones van en 4 columnas (2 en móvil).
+  Teclas: 1-9, 0, Q W E R T Y.
+
+
+5. TRABAJAR Y PROBAR EN LOCAL
+-----------------------------
+Requisitos en cada ordenador: Git, XAMPP en C:\xampp (PHP + MySQL). Opcional: VS Code.
+
+Primera vez en un ordenador nuevo:
+  git clone https://github.com/dremonj/quien-es-ese-pokemon.git
+  (doble clic en dev.bat: crea config.local.php y la base local "pokemon_local")
+
+Cada vez:
+  1. git pull                (traer lo hecho en el otro ordenador)
+  2. doble clic en dev.bat   (abre http://localhost:8000 ; F5 tras cada cambio)
+  3. git add -A ; git commit -m "..." ; git push
+
+La base local es independiente en cada ordenador (cuentas de prueba, sin jugadores reales).
+
+
+6. SUBIR AL HOSTING
+-------------------
+Subir a la carpeta de la web: index.html, config.js y api.php (desde server/), junto
+con config.php. NO subir dev.bat, dev/ ni server/config.local.php.
+Hacer git push a GitHub NO actualiza la web pública: hay que subir los archivos al hosting.
+PENDIENTE: los cambios de dificultad del 8/10/2026 todavía no están subidos al hosting.
+
+
+7. HISTORIA (resumen por fechas)
+--------------------------------
+6/10/2026
+- Primera versión: juego de siluetas en un solo HTML con la PokéAPI, 3 vidas, niveles,
+  scoreboard en localStorage. Publicado en GitHub Pages.
+- Un fallo y se acaba; tiempo medio por respuesta; menos tiempo por nivel.
+- Cuentas de usuario y ranking online con Supabase (funciones RPC, bcrypt, sesiones).
+- Menú de modos de juego con ranking por modo.
+7/10/2026
+- El servidor pasa a arbitrar cada partida (anti-trampas).
+- Migración a hosting propio con PHP + MySQL (api.php); se retira Supabase
+  (el script supabase.sql antiguo está en el historial de git).
+- Ajustes visuales del ranking (fuente pixel, etiqueta del modo); el panel lateral
+  muestra solo el ranking del modo silueta (RANKING_MODE en index.html).
+8/10/2026
+- Dificultad más dura y rápida por acierto (hasta 2 s y 16 opciones).
+- Entorno de pruebas local con XAMPP (dev.bat) y preparación automática de la base local.
+
+
+8. IDEAS / TAREAS ABIERTAS
+--------------------------
+- Subir los cambios de dificultad al hosting.
+- Añadir más modos de juego: nueva entrada en MODES (index.html) y en MODES (api.php),
+  con su lógica de partida en el servidor.
+- Filtro de nombres de usuario ofensivos al crear cuentas (hubo nombres ofensivos
+  en el ranking; se borran desde la tabla players).
+- Valorar bajar LATE_MARGIN (p. ej. 0.7) para que los 2 s sean más estrictos.
