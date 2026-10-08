@@ -78,9 +78,12 @@ function limit($v, int $def, int $max): int {
   return max(1, min($max, is_int($v) ? $v : $def));
 }
 
-// Dificultad por nivel (igual que en la web): tiempo y número de opciones
-function round_time(int $level): float { return max(2.0, 10 * 0.82 ** ($level - 1)); }
-function option_count(int $level): int { return $level >= 6 ? 8 : ($level >= 3 ? 6 : 4); }
+// Dificultad según los aciertos que llevas (h): cada acierto, menos tiempo y más opciones.
+//   ronda 1 (h=0): 8 s, 4 opciones · ronda 8 (h=7): 2,8 s, 10 opciones · desde ronda 13 (h=12): 2 s, 16 opciones
+// El nivel (1 + h / 5) solo multiplica los puntos.
+const SAME_TYPE_FROM = 4;  // desde el 5º acierto, las opciones falsas comparten tipo con la respuesta
+function round_time(int $hits): float { return max(2.0, round(8 * 0.86 ** $hits, 1)); }
+function option_count(int $hits): int { return min(16, 4 + 2 * intdiv($hits, 2)); }
 
 function lock_game($id): array {
   $g = is_uuid($id) ? q('SELECT * FROM games WHERE id = ? FOR UPDATE', [$id])->fetch() : false;
@@ -95,8 +98,8 @@ function prepare_round(string $game): void {
   $g = q('SELECT * FROM games WHERE id = ?', [$game])->fetch();
   $gens = json_decode($g['gens'], true);
   $recent = json_decode($g['recent'], true);
-  $level = (int)$g['level'];
-  $n = option_count($level);
+  $hits = (int)$g['hits'];
+  $n = option_count($hits);
 
   $pool = [];   // id => tipos
   $in = implode(',', array_fill(0, count($gens), '?'));
@@ -108,9 +111,9 @@ function prepare_round(string $game): void {
   $choices = $fresh ?: $ids;
   $answer = $choices[random_int(0, count($choices) - 1)];
 
-  // a partir del nivel 4, las opciones falsas comparten tipo con la respuesta (si hay suficientes)
+  // las opciones falsas comparten tipo con la respuesta (si hay suficientes)
   $others = [];
-  if ($level >= 4) {
+  if ($hits >= SAME_TYPE_FROM) {
     $same = array_keys(array_filter($pool, fn($t, $id) => $id !== $answer && array_intersect($t, $pool[$answer]), ARRAY_FILTER_USE_BOTH));
     if (count($same) >= $n - 1) $others = $same;
   }
@@ -122,7 +125,7 @@ function prepare_round(string $game): void {
   $recent[] = $answer;
   $recent = array_slice($recent, -40);
   q('UPDATE games SET answer_id = ?, options = ?, time_limit = ?, round_started = NULL, recent = ? WHERE id = ?',
-    [$answer, json_encode($options), round_time($level), json_encode($recent), $game]);
+    [$answer, json_encode($options), round_time($hits), json_encode($recent), $game]);
 }
 
 // Cierra la partida y, si es de un jugador con cuenta, guarda su puntuación.
@@ -239,6 +242,7 @@ $API = [
     return [
       'round' => $g['rounds'] + 1,
       'level' => $g['level'],
+      'hits' => (int)$g['hits'],
       'time' => $g['time_limit'],
       'img' => sprintf(IMG, $g['answer_id']),
       'options' => array_map(fn($id) => $names[$id], $opts),
@@ -294,7 +298,7 @@ $API = [
       'streak' => $streak,
       'avg_time' => $total / $rounds,
       'level_up' => $levelUp,
-      'next_time' => round_time($level),
+      'next_time' => round_time($hits),
       'next_img' => $next,
       'over' => !$ok,
       'saved' => $saved,

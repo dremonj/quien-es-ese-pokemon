@@ -135,13 +135,18 @@
     font-family: var(--font-display); font-size: 9px; background: var(--ink); color: var(--panel);
     border-radius: 4px; padding: 4px 5px; flex: none;
   }
-  .opt span { overflow-wrap: anywhere; }
+  .opt span { overflow-wrap: anywhere; hyphens: auto; }
   .opt:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 7px 0 var(--shell-dark); }
   .opt:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--shell-dark); }
   .opt:disabled { cursor: default; }
   .opt.correct { background: var(--ok); color: #fff; }
   .opt.wrong { background: var(--bad); color: #fff; }
   .opt.dim { opacity: .55; }
+  /* con muchas opciones (hasta 16): botones compactos en 3-4 columnas */
+  .controls:has(.opt:nth-child(9)) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .controls:has(.opt:nth-child(9)) .opt { font-size: 12px; padding: 9px 6px; gap: 6px; box-shadow: 0 4px 0 var(--shell-dark); }
+  .controls:has(.opt:nth-child(9)) .opt kbd { font-size: 8px; padding: 3px 4px; }
+  @media (max-width: 480px) { .controls:has(.opt:nth-child(9)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   button:focus-visible, input:focus-visible + .chip { outline: 3px solid var(--gold); outline-offset: 2px; }
 
   .bottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -289,8 +294,10 @@ const HITS_PER_LEVEL = 5;  // aciertos necesarios para subir de nivel
 // La partida la arbitra la base de datos (supabase.sql: start_game, start_round, answer_round, end_game):
 // elige el Pokémon, mide el tiempo, corrige y guarda la puntuación. Aquí solo se pinta.
 // Efectos visuales por nivel
-const mirrored    = lvl => lvl >= 5;                                   // silueta en espejo
-const zoomed      = lvl => lvl >= 7;                                   // silueta recortada
+// Efectos visuales según los aciertos que llevas (la dificultad de tiempo y opciones la pone el servidor)
+const mirrored    = hits => hits >= 5;                                 // silueta en espejo desde la ronda 6
+const zoomed      = hits => hits >= 9;                                 // silueta recortada desde la ronda 10
+const OPTION_KEYS = "1234567890QWERTY";                                // teclas para las 16 opciones
 
 // Modos de juego. Cada modo tiene su propio ranking en la base de datos (columna scores.mode = clave).
 // Para añadir uno: nueva entrada aquí con su pantalla de inicio (setup).
@@ -539,7 +546,7 @@ function showSiluetaSetup() {
   $screen.innerHTML = `
     <div class="menu">
       <h2>${esc(MODES.silueta.name)}</h2>
-      <p>Un fallo y se acaba la partida. Cada ${HITS_PER_LEVEL} aciertos subes de nivel: menos tiempo, más opciones, opciones del mismo tipo, siluetas en espejo y recortadas. Usa las teclas 1 a 8 para responder rápido.</p>
+      <p>Un fallo y se acaba la partida. Cada acierto lo pone más difícil: menos tiempo y más opciones, hasta 16 opciones con 2 segundos. Luego vienen opciones del mismo tipo y siluetas en espejo y recortadas. Cada ${HITS_PER_LEVEL} aciertos subes de nivel y los puntos valen más. Responde con las teclas 1–9, 0 y Q W E R T Y.</p>
       <div class="gens" id="gens">
         ${GENS.map(g => `
           <label><input type="checkbox" id="gen${g.n}" value="${g.n}" ${selectedGens.includes(g.n) ? "checked" : ""}>
@@ -626,17 +633,17 @@ async function playRound() {
   g.round = round.round;
   g.answered = false;
 
-  const lvl = round.level;
+  const h = round.hits ?? 0;
   const tf = [];
-  if (zoomed(lvl)) tf.push("scale(1.9)");
-  if (mirrored(lvl)) tf.push("scaleX(-1)");
-  const origin = zoomed(lvl) ? `transform-origin:${rand(25, 75)}% ${rand(25, 75)}%;` : "";
+  if (zoomed(h)) tf.push("scale(1.9)");
+  if (mirrored(h)) tf.push("scaleX(-1)");
+  const origin = zoomed(h) ? `transform-origin:${rand(25, 75)}% ${rand(25, 75)}%;` : "";
   $screen.innerHTML = `${hud()}
     <div class="timer"><div id="bar"></div></div>
     <div class="stage"><img id="poke" src="${esc(round.img)}" alt="Silueta de un Pokémon misterioso" draggable="false" style="${tf.length ? `transform:${tf.join(" ")};` : ""}${origin}"></div>
     <div class="info" id="info"><div class="num">RONDA ${round.round} · ${round.time.toFixed(1)}s</div><div class="name">???</div></div>`;
   $controls.innerHTML = round.options.map((name, i) =>
-    `<button class="opt" type="button" data-i="${i}"><kbd>${i + 1}</kbd><span>${esc(name)}</span></button>`).join("");
+    `<button class="opt" type="button" data-i="${i}"><kbd>${OPTION_KEYS[i]}</kbd><span>${esc(name)}</span></button>`).join("");
   $controls.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(+b.dataset.i));
   startTimer(round.time);
 }
@@ -808,8 +815,8 @@ async function showBoard(tab = "top") {
 document.addEventListener("keydown", e => {
   if (!state || state.answered !== false) return;
   if (e.target.tagName === "INPUT") return;
-  const n = +e.key;
-  if (n >= 1 && n <= 8 && $controls.querySelectorAll(".opt")[n - 1]) answer(n - 1);
+  const i = OPTION_KEYS.indexOf(e.key.toUpperCase());
+  if (e.key.length === 1 && i >= 0 && $controls.querySelectorAll(".opt")[i]) answer(i);
 });
 
 showMenu();
